@@ -20,7 +20,6 @@ def generate_merchants(n_merchants=100):
         store_type = random.choice(store_types)
         industry = random.choice(industries)
         income_level = abs(np.random.normal(50000, 15000)) # Ensure non-negative
-        foot_traffic = abs(np.random.normal(200, 70))     # Ensure non-negative
         rent_pct_revenue = np.random.uniform(0.05, 0.25)
         weather_preference = random.choice(['Rain Boost', 'Sunny Boost', 'None'])
 
@@ -56,7 +55,6 @@ def generate_merchants(n_merchants=100):
             'store_type': store_type,
             'industry': industry,
             'income_level': round(income_level, 2),
-            'foot_traffic': round(foot_traffic, 2),
             'rent_pct_revenue': round(rent_pct_revenue, 4),
             'weather_preference': weather_preference,
             'avg_txn_value': round(avg_txn_value, 2),
@@ -92,7 +90,6 @@ def generate_competitors(merchants_df):
             comp['daily_txn_count'] *= np.random.uniform(0.8, 1.2)
             comp['refund_rate'] *= np.random.uniform(0.8, 1.2)
             comp['income_level'] *= np.random.uniform(0.95, 1.05)
-            comp['foot_traffic'] *= np.random.uniform(0.9, 1.1)
             comp['rent_pct_revenue'] *= np.random.uniform(0.9, 1.1)
             comp['store_size_sqft'] *= np.random.uniform(0.85, 1.15)
 
@@ -101,7 +98,6 @@ def generate_competitors(merchants_df):
             comp['daily_txn_count'] = max(0, int(comp['daily_txn_count']))
             comp['refund_rate'] = round(max(0, min(1, comp['refund_rate'])), 4)
             comp['income_level'] = round(max(0, comp['income_level']), 2)
-            comp['foot_traffic'] = round(max(0, comp['foot_traffic']), 2)
             comp['rent_pct_revenue'] = round(max(0, comp['rent_pct_revenue']), 4)
             comp['store_size_sqft'] = max(100, int(comp['store_size_sqft'])) # Min size 100
 

@@ -13,7 +13,7 @@ try:
     # Assuming compare_merchants.py has the corrected get_comparison_data function
     from compare_merchants import get_comparison_data
     # Assuming insights_engine.py has the corrected functions
-    from insights_engine import generate_advanced_ai_insights, generate_insights
+    from insights_engine import generate_advanced_ai_insights, generate_insights, generate_quick_insights, format_quick_comparison
 except ImportError as import_err:
      # Display error in the app if imports fail
      st.set_page_config(page_title="Import Error", layout="centered") # Minimal config for error
@@ -87,14 +87,11 @@ if merchant_id_list:
 else:
     st.sidebar.error("No unique merchant IDs found in the data file.")
 
-
 st.sidebar.header("Configuration")
 show_simple_insights = st.sidebar.checkbox("Show Simple Rule-Based Insights", value=False)
 
 # --- Main Area ---
 if merchant_id:
-    st.write(f"Attempting analysis for: {merchant_id}") # DEBUG LINE
-
     # --- Get Data using the new function ---
     merchant_row, comparison_df_local, comparison_df_cluster = None, None, None # Initialize variables
     local_competitors, cluster_peers, cluster_averages = None, None, None
@@ -105,34 +102,54 @@ if merchant_id:
          st.error("Cannot perform comparison as competitor data failed to load.")
     else:
         try:
-            st.write("Calling get_comparison_data...") # DEBUG LINE
             print(f"Calling get_comparison_data for {merchant_id}...") # Also print to terminal
 
             (merchant_row, comparison_df_local, comparison_df_cluster,
              local_competitors, cluster_peers, cluster_averages) = get_comparison_data(merchant_id, merchants, competitors)
 
-            st.write("Finished get_comparison_data.") # DEBUG LINE
             print("Finished get_comparison_data.") # Also print to terminal
 
-            # --- Add checks for returned values - KEEP THESE ---
-            st.write(f"Debug: merchant_row is None? {merchant_row is None}")
-            st.write(f"Debug: comparison_df_local is None? {comparison_df_local is None}")
-            if comparison_df_local is not None:
-                 st.write(f"Debug: comparison_df_local is empty? {comparison_df_local.empty}")
-            st.write(f"Debug: comparison_df_cluster is None? {comparison_df_cluster is None}")
-            if comparison_df_cluster is not None:
-                 st.write(f"Debug: comparison_df_cluster is empty? {comparison_df_cluster.empty}")
-            # --- End checks ---
-
         except Exception as e:
-            # KEEP this error handling
             st.error(f"An error occurred during get_comparison_data or initial processing: {e}")
             st.text(traceback.format_exc()) # Display traceback in the app
             print(f"ERROR in streamlit_app.py main block: {e}") # Print error to terminal
             print(traceback.format_exc())
             merchant_row = None # Ensure merchant_row is None if comparison fails
-            # st.stop() # Optionally stop execution if comparison fails critically
 
+    # Add info button about clustering and competitors AFTER we have merchant data
+    if merchant_row is not None:
+        with st.sidebar.expander("ℹ️ How are merchants grouped?", expanded=False):
+            st.markdown(f"""
+            ### Understanding Your Business Analysis
+            
+            We analyze your business in two ways:
+            
+            **1. Local Competitors** 👥
+            - Businesses in your area (same pincode)
+            - Same industry as you
+            - Direct competition for customers
+            
+            **2. Similar Businesses (Clusters)** 🔄
+            - Businesses with similar performance patterns
+            - May be in different locations
+            - Share similar characteristics like:
+                - Transaction patterns
+                - Customer behavior
+                - Operational efficiency
+            
+            **Example for {merchant_row.get('industry', 'your industry')}:**
+            - Local Competitors: Other {merchant_row.get('industry', 'your industry')} stores in your neighborhood
+            - Cluster Peers: {merchant_row.get('industry', 'your industry')} businesses with similar:
+                - Average transaction value
+                - Daily customer count
+                - Refund rates
+                - Operational efficiency
+            
+            This dual analysis helps you:
+            - Compare with immediate competition
+            - Learn from similar businesses
+            - Identify unique opportunities
+            """)
 
     # --- Check if merchant_row was successfully retrieved and processed ---
     if merchant_row is None:
@@ -179,37 +196,6 @@ if merchant_id:
                  with tab1:
                      if comparison_df_local is not None and not comparison_df_local.empty:
                          st.dataframe(comparison_df_local, use_container_width=True, hide_index=True)
-
-                         # Visualization vs Local
-                         try: # Add try-except for plotting
-                             fig1, ax1 = plt.subplots()
-                             metrics_local = comparison_df_local['Metric']
-                             # Ensure conversion to numeric, coercing errors
-                             merchant_vals_local = pd.to_numeric(comparison_df_local['Merchant Value'], errors='coerce')
-                             comp_vals_local = pd.to_numeric(comparison_df_local['Local Avg'], errors='coerce')
-
-                             bar_width = 0.35
-                             index = np.arange(len(metrics_local))
-                             # Plot only where values are not NaN after coercion
-                             valid_indices_local = ~np.isnan(merchant_vals_local) & ~np.isnan(comp_vals_local)
-                             if valid_indices_local.any():
-                                 ax1.bar(index[valid_indices_local] - bar_width/2, merchant_vals_local[valid_indices_local], bar_width, label='Merchant', color='skyblue')
-                                 ax1.bar(index[valid_indices_local] + bar_width/2, comp_vals_local[valid_indices_local], bar_width, label='Local Avg', color='lightcoral')
-
-                                 ax1.set_ylabel('Value')
-                                 ax1.set_title('Comparison vs Local Competitors')
-                                 ax1.set_xticks(index[valid_indices_local])
-                                 ax1.set_xticklabels(metrics_local[valid_indices_local], rotation=45, ha="right")
-                                 ax1.legend()
-                                 plt.tight_layout()
-                                 st.pyplot(fig1)
-                             else:
-                                 st.warning("Could not generate local comparison plot due to missing/invalid numeric data.")
-                         except Exception as plot_err:
-                             st.error(f"Error generating local comparison plot: {plot_err}")
-                             st.text(traceback.format_exc())
-
-
                      elif local_competitors is not None and local_competitors.empty:
                           st.info("No local competitors found based on Pincode and Industry.")
                      else: # comparison_df_local is None or local_competitors is None
@@ -219,34 +205,6 @@ if merchant_id:
                  with tab2:
                      if comparison_df_cluster is not None and not comparison_df_cluster.empty:
                          st.dataframe(comparison_df_cluster, use_container_width=True, hide_index=True)
-
-                         # Visualization vs Cluster
-                         try: # Add try-except for plotting
-                             fig2, ax2 = plt.subplots()
-                             metrics_cluster = comparison_df_cluster['Metric']
-                             merchant_vals_cluster = pd.to_numeric(comparison_df_cluster['Merchant Value'], errors='coerce')
-                             comp_vals_cluster = pd.to_numeric(comparison_df_cluster['Cluster Avg'], errors='coerce')
-
-                             bar_width = 0.35
-                             index_c = np.arange(len(metrics_cluster))
-                             valid_indices_cluster = ~np.isnan(merchant_vals_cluster) & ~np.isnan(comp_vals_cluster)
-                             if valid_indices_cluster.any():
-                                 ax2.bar(index_c[valid_indices_cluster] - bar_width/2, merchant_vals_cluster[valid_indices_cluster], bar_width, label='Merchant', color='skyblue')
-                                 ax2.bar(index_c[valid_indices_cluster] + bar_width/2, comp_vals_cluster[valid_indices_cluster], bar_width, label='Cluster Avg', color='lightgreen')
-
-                                 ax2.set_ylabel('Value')
-                                 ax2.set_title('Comparison vs Cluster Peers')
-                                 ax2.set_xticks(index_c[valid_indices_cluster])
-                                 ax2.set_xticklabels(metrics_cluster[valid_indices_cluster], rotation=45, ha="right")
-                                 ax2.legend()
-                                 plt.tight_layout()
-                                 st.pyplot(fig2)
-                             else:
-                                  st.warning("Could not generate cluster comparison plot due to missing/invalid numeric data.")
-                         except Exception as plot_err:
-                             st.error(f"Error generating cluster comparison plot: {plot_err}")
-                             st.text(traceback.format_exc())
-
                      elif merchant_row.get('cluster', -1) == -1:
                           st.warning("Clustering failed or was not performed, cannot show cluster comparison.")
                      elif cluster_peers is not None and cluster_peers.empty:
@@ -257,30 +215,41 @@ if merchant_id:
 
         # --- AI Insights Section ---
         st.divider()
-        st.header("💡 AI-Generated Insights & Recommendations")
+        st.header("💡 Quick Insights")
 
-        # Ensure necessary data is available before generating insights
+        # Add a button for detailed analysis
+        show_detailed_analysis = st.button("📊 Show Detailed Analysis", type="secondary")
+
         if merchant_row is not None:
-             try:
-                 # Generate advanced insights using the new function
-                 ai_insights = generate_advanced_ai_insights(
-                     merchant_row,
-                     comparison_df_local, # Pass None if not available
-                     comparison_df_cluster, # Pass None if not available
-                     cluster_peers, # Pass None if not available
-                     cluster_averages # Pass None if not available
-                 )
-                 # Use markdown to render potential formatting from LLM
-                 st.markdown(ai_insights)
-             except NameError:
-                  st.error("The function `generate_advanced_ai_insights` seems to be missing or not imported correctly from insights_engine.py.")
-                  print("ERROR: `generate_advanced_ai_insights` not found during call.")
-             except Exception as insight_err:
-                 st.error(f"Error generating AI insights: {insight_err}")
-                 st.text(traceback.format_exc())
-                 print(f"ERROR generating AI insights: {insight_err}\n{traceback.format_exc()}")
-        else:
-             st.warning("Cannot generate AI insights as merchant data is missing.")
+            try:
+                # Generate quick insights by default
+                quick_insights = generate_quick_insights(
+                    merchant_row,
+                    comparison_df_local,
+                    comparison_df_cluster,
+                    cluster_peers,
+                    cluster_averages
+                )
+                
+                # Display quick insights in a clean, number-focused format
+                st.markdown(quick_insights)
+                
+                # Show detailed analysis only if button is clicked
+                if show_detailed_analysis:
+                    st.divider()
+                    st.subheader("📊 Detailed Analysis")
+                    with st.spinner("Generating detailed analysis..."):
+                        detailed_insights = generate_advanced_ai_insights(
+                            merchant_row,
+                            comparison_df_local,
+                            comparison_df_cluster,
+                            cluster_peers,
+                            cluster_averages
+                        )
+                        st.markdown(detailed_insights)
+            
+            except Exception as insight_err:
+                st.error(f"Error generating insights: {insight_err}")
 
 
         # Optionally display simple insights if checkbox is ticked
