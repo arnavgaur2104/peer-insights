@@ -164,57 +164,79 @@ def generate_quick_insights(merchant_row, comparison_local, comparison_cluster, 
     insights.append(f"## 📊 Performance Analysis for {merchant_row.get('industry', 'Business')}")
     insights.append(f"Location: {merchant_row.get('city', 'N/A')} | Store Type: {merchant_row.get('store_type', 'N/A')}\n")
     
-    # Add critical issues
+    # Add critical issues (red background)
     if critical_issues:
         insights.append("### 🔍 Critical Issues")
         for issue in critical_issues[:3]:  # Top 3 issues
-            insights.append(f"**{issue['title']}**")
-            insights.append(f"- Current vs Average: {issue['comparison']}")
-            insights.append(f"- Action: {issue['action']}")
-            insights.append(f"- Impact: {issue['impact']}\n")
+            insights.append(f"""
+<div style='background-color: rgba(224, 49, 49, 0.1); padding: 1rem; border-radius: 5px; border-left: 4px solid #e03131;'>
+**{issue['title']}**  
+Current vs Average: {issue['comparison']}  
+💡 {issue['action']}  
+Impact: {issue['impact']}
+</div>
+""")
     else:
         insights.append("### ✅ No Critical Issues Detected\n")
     
-    # Add opportunities
+    # Add opportunities (green background)
     if opportunities:
         insights.append("### 💡 Growth Opportunities")
         for opp in opportunities[:2]:  # Top 2 opportunities
-            insights.append(f"**{opp['title']}**")
-            insights.append(f"- Current vs Average: {opp['comparison']}")
-            insights.append(f"- Action: {opp['action']}")
-            insights.append(f"- Impact: {opp['impact']}\n")
+            insights.append(f"""
+<div style='background-color: rgba(43, 138, 62, 0.1); padding: 1rem; border-radius: 5px; border-left: 4px solid #2b8a3e;'>**{opp['title']}**  
+Current vs Average: {opp['comparison']}  
+💡 {opp['action']}  
+Impact: {opp['impact']}
+</div>
+""".replace('\n', '<br>'))
     
-    # Add quick wins
+    # Add quick wins (blue background)
     insights.append("### 🚀 Quick Wins")
     
     # Quick win 1: Upselling opportunity
     if merchant_row.get('avg_txn_value', 0) < merchant_row.get('income_level', 0) * 0.1:
         target_value = merchant_row.get('income_level', 0) * 0.1
         current_value = merchant_row.get('avg_txn_value', 0)
-        insights.append("1. **Upselling Opportunity**")
-        insights.append(f"   - Current: ₹{current_value:.2f}")
-        insights.append(f"   - Target: ₹{target_value:.2f}")
-        insights.append(f"   - Action: Train staff on premium product features")
-        insights.append(f"   - Expected Impact: +₹{target_value - current_value:.2f} per transaction\n")
+        insights.append(f"""
+<div style='background-color: rgba(77, 171, 247, 0.1); padding: 1rem; border-radius: 5px; border-left: 4px solid #4dabf7;'>**Upselling Opportunity**  
+Current: ₹{current_value:.2f}  
+Target: ₹{target_value:.2f}  
+💡 Train staff on premium product features  
+Expected Impact: +₹{target_value - current_value:.2f} per transaction
+</div>
+""".replace('\n', '<br>'))
     
     # Quick win 2: Footfall boost
     if merchant_row.get('daily_txn_count', 0) < 50:
         current_count = merchant_row.get('daily_txn_count', 0)
         target_count = int(current_count * 1.2)  # 20% increase
-        insights.append("2. **Footfall Boost**")
-        insights.append(f"   - Current: {current_count} customers")
-        insights.append(f"   - Target: {target_count} customers")
-        insights.append("   - Action: Launch 2-week promotion with 10% discount")
-        insights.append(f"   - Expected Impact: +{target_count - current_count} customers daily\n")
+        insights.append(f"""
+<div style='background-color: rgba(77, 171, 247, 0.1); padding: 1rem; border-radius: 5px; border-left: 4px solid #4dabf7;'>
+**Footfall Boost**  
+Current: {current_count} customers  
+Target: {target_count} customers  
+💡 Launch 2-week promotion with 10% discount  
+Expected Impact: +{target_count - current_count} customers daily
+</div>
+""")
     
-    # Add cluster insights
+    # Add cluster insights (blue background)
     if cluster_peers is not None and not cluster_peers.empty:
         insights.append("### 🔄 Cluster Insights")
+        insights.append("#### Top Performers in Your Cluster")
+        
         top_performers = cluster_peers.nlargest(3, 'avg_txn_value')
         if not top_performers.empty:
-            insights.append("**Top Performers in Your Cluster:**")
+            insights.append("""
+<div style='background-color: rgba(77, 171, 247, 0.1); padding: 1rem; border-radius: 5px; border-left: 4px solid #4dabf7;'>
+""")
             for _, peer in top_performers.iterrows():
-                insights.append(f"- {peer['store_type']} in {peer['city']}: ₹{peer['avg_txn_value']:.2f} avg. transaction")
+                insights.append(f"""
+🏪 **{peer['store_type']}** in {peer['city']}  
+   Average Transaction: ₹{peer['avg_txn_value']:.2f}
+""")
+            insights.append("</div>")
     
     return "\n".join(insights)
 

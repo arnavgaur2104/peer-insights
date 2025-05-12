@@ -22,8 +22,73 @@ except ImportError as import_err:
 
 
 # --- Set Page Config FIRST ---
-# Move this to the top, right after imports
-st.set_page_config(page_title="Merchant AI Insights v2", page_icon="🧠", layout="wide") # Use wide layout
+st.set_page_config(
+    page_title="Merchant AI Insights v2",
+    page_icon="🧠",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Initialize session state variables
+if 'detailed_insights' not in st.session_state:
+    st.session_state.detailed_insights = None
+if 'show_detailed_analysis' not in st.session_state:
+    st.session_state.show_detailed_analysis = False
+
+# Add custom CSS for better styling
+st.markdown("""
+    <style>
+    /* Make sidebar background match main background */
+    section[data-testid="stSidebar"] {
+        background-color: #1a1a1a !important;
+    }
+
+    /* Remove grey background from search box */
+    section[data-testid="stSidebar"] input[type="text"] {
+        background-color: #1a1a1a !important;
+        color: #e0e0e0 !important;
+        border: 1px solid #404040 !important;
+        border-radius: 5px !important;
+    }
+    section[data-testid="stSidebar"] input[type="text"]:focus {
+        outline: none !important;
+        box-shadow: 0 0 0 2px #4dabf7 !important;
+    }
+
+    /* Remove grey background from selectbox (dropdown) */
+    section[data-testid="stSidebar"] .stSelectbox > div > div {
+        background-color: #1a1a1a !important;
+        color: #e0e0e0 !important;
+        border: 1px solid #404040 !important;
+        border-radius: 5px !important;
+    }
+    /* Dropdown menu and options */
+    section[data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] > div {
+        background-color: #1a1a1a !important;
+        color: #e0e0e0 !important;
+    }
+    section[data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] > div > div {
+        background-color: #1a1a1a !important;
+        color: #e0e0e0 !important;
+    }
+    section[data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] > div > div[aria-selected="true"] {
+        background-color: #4dabf7 !important;
+        color: #1a1a1a !important;
+    }
+
+    /* Remove grey backgrounds from all insights and cards */
+    .insight-card, .insight-section, .highlight, .metric-card, .performance-section, .insight-recommendation, .performance-details {
+        background: transparent !important;
+        background-color: transparent !important;
+        box-shadow: none !important;
+    }
+    /* Remove background from any divs inside insights */
+    .insight-section div, .insight-card div, .performance-section div, .highlight div {
+        background: transparent !important;
+        background-color: transparent !important;
+    }
+    </style>
+""", unsafe_allow_html=True)
 
 # --- Load Data (Define Function AFTER set_page_config) ---
 @st.cache_data # Cache data loading
@@ -59,173 +124,111 @@ def load_data():
 merchants, competitors = load_data()
 
 # --- Start Building the UI ---
-st.title("🧠 AI-Powered Merchant Insight Generator") # Now this is fine
+st.title("🧠 AI-Powered Merchant Insights")
 
-# Stop execution if data loading failed (merchants is critical)
-if merchants is None:
-    st.warning("Stopping execution: Merchant data loading failed.")
-    st.stop()
-if competitors is None:
-     st.warning("Competitor data loading failed. Comparisons will not be available.")
-     # Allow app to continue but comparisons might fail later
+# Add a welcome message
+st.markdown("""
+    Welcome to your personalized merchant insights dashboard! 
+    Select a merchant from the sidebar to get started with AI-powered analysis and recommendations.
+""")
 
-
-# --- Sidebar ---
-st.sidebar.header("Select Merchant")
-# Initialize merchant_id
-merchant_id = None
+# Initialize merchant list
 merchant_id_list = []
 if not merchants.empty:
-    merchant_id_list = merchants['merchant_id'].unique().tolist() # Use unique IDs
+    merchant_id_list = merchants['merchant_id'].unique().tolist()
 
-if merchant_id_list:
-    merchant_id = st.sidebar.selectbox(
-        "Merchant ID",
-        sorted(merchant_id_list), # Sort IDs for better usability
-        index=0 # Default to the first merchant
-    )
-else:
-    st.sidebar.error("No unique merchant IDs found in the data file.")
+# --- Sidebar ---
+with st.sidebar:
+    st.header("🔍 Select Merchant")
+    
+    # Add a search box for merchant IDs
+    merchant_search = st.text_input("Search Merchant ID", "")
+    
+    # Filter merchant IDs based on search
+    if merchant_search:
+        filtered_merchants = [m for m in merchant_id_list if merchant_search.lower() in m.lower()]
+    else:
+        filtered_merchants = merchant_id_list
+    
+    if filtered_merchants:
+        merchant_id = st.selectbox(
+            "Select from Results",
+            sorted(filtered_merchants),
+            index=0
+        )
+    else:
+        st.warning("No merchants found matching your search.")
+        merchant_id = None
 
-st.sidebar.header("Configuration")
-show_simple_insights = st.sidebar.checkbox("Show Simple Rule-Based Insights", value=False)
+    st.divider()
+    
+    # Add configuration options in an expander
+    with st.expander("⚙️ Settings", expanded=False):
+        show_simple_insights = st.checkbox("Show Simple Rule-Based Insights", value=False)
+        st.info("Toggle additional insights and analysis options here.")
+
+    # Add clustering explanation
+    with st.expander("ℹ️ Understanding Your Analysis", expanded=False):
+        st.markdown("""
+        ### How We Analyze Your Business
+
+        We use two powerful methods to understand your business performance:
+
+        #### 1. Local Competitors 👥
+        - Businesses in your immediate area (same pincode)
+        - Same industry as yours
+        - Direct competition for customers
+        - Helps you understand your local market position
+
+        #### 2. Similar Businesses (Clusters) 🔄
+        - Businesses with similar performance patterns
+        - May be in different locations
+        - Share similar characteristics:
+            - Transaction patterns
+            - Customer behavior
+            - Operational efficiency
+            - Business size and scale
+
+        #### Why This Matters
+        - Compare with immediate competition
+        - Learn from similar businesses
+        - Identify unique opportunities
+        - Make data-driven decisions
+        """)
 
 # --- Main Area ---
 if merchant_id:
-    # --- Get Data using the new function ---
-    merchant_row, comparison_df_local, comparison_df_cluster = None, None, None # Initialize variables
-    local_competitors, cluster_peers, cluster_averages = None, None, None
-    ai_insights = "Insights calculation not reached yet." # Default insight text
+    # Get merchant data
+    merchant_row, comparison_df_local, comparison_df_cluster, local_competitors, cluster_peers, cluster_averages = get_comparison_data(merchant_id, merchants, competitors)
 
-    # Ensure competitors df is available before calling comparison function
-    if competitors is None:
-         st.error("Cannot perform comparison as competitor data failed to load.")
-    else:
-        try:
-            print(f"Calling get_comparison_data for {merchant_id}...") # Also print to terminal
-
-            (merchant_row, comparison_df_local, comparison_df_cluster,
-             local_competitors, cluster_peers, cluster_averages) = get_comparison_data(merchant_id, merchants, competitors)
-
-            print("Finished get_comparison_data.") # Also print to terminal
-
-        except Exception as e:
-            st.error(f"An error occurred during get_comparison_data or initial processing: {e}")
-            st.text(traceback.format_exc()) # Display traceback in the app
-            print(f"ERROR in streamlit_app.py main block: {e}") # Print error to terminal
-            print(traceback.format_exc())
-            merchant_row = None # Ensure merchant_row is None if comparison fails
-
-    # Add info button about clustering and competitors AFTER we have merchant data
     if merchant_row is not None:
-        with st.sidebar.expander("ℹ️ How are merchants grouped?", expanded=False):
-            st.markdown(f"""
-            ### Understanding Your Business Analysis
-            
-            We analyze your business in two ways:
-            
-            **1. Local Competitors** 👥
-            - Businesses in your area (same pincode)
-            - Same industry as you
-            - Direct competition for customers
-            
-            **2. Similar Businesses (Clusters)** 🔄
-            - Businesses with similar performance patterns
-            - May be in different locations
-            - Share similar characteristics like:
-                - Transaction patterns
-                - Customer behavior
-                - Operational efficiency
-            
-            **Example for {merchant_row.get('industry', 'your industry')}:**
-            - Local Competitors: Other {merchant_row.get('industry', 'your industry')} stores in your neighborhood
-            - Cluster Peers: {merchant_row.get('industry', 'your industry')} businesses with similar:
-                - Average transaction value
-                - Daily customer count
-                - Refund rates
-                - Operational efficiency
-            
-            This dual analysis helps you:
-            - Compare with immediate competition
-            - Learn from similar businesses
-            - Identify unique opportunities
-            """)
-
-    # --- Check if merchant_row was successfully retrieved and processed ---
-    if merchant_row is None:
-        st.error(f"Merchant {merchant_id} data could not be fully processed or found (merchant_row is None after get_comparison_data). Check data files, IDs, and compare_merchants.py logic.")
-    else:
-        # --- Display Section (Main Content) ---
-        st.header(f"Analysis for Merchant: {merchant_id}")
-        st.markdown(f"**Industry:** {merchant_row.get('industry', 'N/A')} | **Store Type:** {merchant_row.get('store_type', 'N/A')} | **Location:** {merchant_row.get('city', 'N/A')}")
-
-        # Display logic using columns
-        col1, col2 = st.columns([1, 2]) # Adjust column ratios as needed
-
+        # Create a header with merchant info
+        col1, col2, col3 = st.columns([2,1,1])
         with col1:
-            st.subheader("Merchant Profile")
-            # Display selected details instead of raw JSON
-            profile_disp = {k: v for k, v in merchant_row.items() if k not in ['cluster', 'pincode']} # Hide cluster/pincode here
-            try:
-                 profile_series = pd.Series(profile_disp, name="Value")
-                 # Convert the 'Value' column to string type for display to fix ArrowTypeError
-                 st.dataframe(profile_series.astype(str), use_container_width=True)
-            except Exception as e:
-                 st.error(f"Error displaying merchant profile: {e}")
-                 st.write(profile_disp) # Fallback to writing dict
-
-            st.subheader("Cluster Peers")
-            if cluster_peers is not None and not cluster_peers.empty:
-                 st.metric(label="Peers in Same Cluster", value=len(cluster_peers))
-                 # Show some basic info about peers
-                 st.dataframe(cluster_peers[['merchant_id', 'city', 'store_type']].head(), use_container_width=True)
-            elif merchant_row.get('cluster', -1) == -1:
-                 st.warning("Clustering could not be performed for this merchant.")
-            else: # Merchant has a cluster, but no peers found
-                 st.info("No other merchants found in the same cluster.")
-
+            st.markdown(f"### {merchant_row.get('industry', 'Business')} Analysis")
+            st.markdown(f"**Location:** {merchant_row.get('city', 'N/A')} | **Store Type:** {merchant_row.get('store_type', 'N/A')}")
+        
+        # Quick stats in cards
         with col2:
-            st.subheader("📊 Performance Comparisons")
+            st.metric(
+                "Average Transaction",
+                f"₹{merchant_row.get('avg_txn_value', 0):.2f}",
+                f"{((merchant_row.get('avg_txn_value', 0) - comparison_df_local['Local Avg'].iloc[0]) / comparison_df_local['Local Avg'].iloc[0] * 100):.1f}%" if comparison_df_local is not None else None
+            )
+        
+        with col3:
+            st.metric(
+                "Daily Customers",
+                f"{merchant_row.get('daily_txn_count', 0)}",
+                f"{((merchant_row.get('daily_txn_count', 0) - comparison_df_local['Local Avg'].iloc[1]) / comparison_df_local['Local Avg'].iloc[1] * 100):.1f}%" if comparison_df_local is not None else None
+            )
 
-            # Check if competitor data was loaded for tabs
-            if competitors is None:
-                 st.warning("Competitor data was not loaded, cannot show comparisons.")
-            else:
-                 tab1, tab2 = st.tabs(["Compare vs Local Competitors", "Compare vs Cluster Peers"])
+        # Main content in tabs
+        tab1, tab2, tab3 = st.tabs(["📊 Quick Insights", "📈 Performance", "📋 Details"])
 
-                 with tab1:
-                     if comparison_df_local is not None and not comparison_df_local.empty:
-                         st.dataframe(comparison_df_local, use_container_width=True, hide_index=True)
-                     elif local_competitors is not None and local_competitors.empty:
-                          st.info("No local competitors found based on Pincode and Industry.")
-                     else: # comparison_df_local is None or local_competitors is None
-                          st.warning("Local comparison data could not be generated (competitors might be missing or an error occurred).")
-
-
-                 with tab2:
-                     if comparison_df_cluster is not None and not comparison_df_cluster.empty:
-                         st.dataframe(comparison_df_cluster, use_container_width=True, hide_index=True)
-                     elif merchant_row.get('cluster', -1) == -1:
-                          st.warning("Clustering failed or was not performed, cannot show cluster comparison.")
-                     elif cluster_peers is not None and cluster_peers.empty:
-                          st.info("No other merchants found in the same cluster for comparison.")
-                     else: # comparison_df_cluster is None or cluster_peers is None
-                          st.warning("Cluster comparison data could not be generated (clustering might have failed or an error occurred).")
-
-
-        # --- AI Insights Section ---
-        st.divider()
-        st.header("💡 Quick Insights")
-
-        # Initialize session state for detailed insights if not exists
-        if 'detailed_insights' not in st.session_state:
-            st.session_state.detailed_insights = None
-        if 'show_detailed_analysis' not in st.session_state:
-            st.session_state.show_detailed_analysis = False
-
-        if merchant_row is not None:
+        with tab1:
+            # Quick Insights
             try:
-                # Generate quick insights by default
                 quick_insights = generate_quick_insights(
                     merchant_row,
                     comparison_df_local,
@@ -234,19 +237,22 @@ if merchant_id:
                     cluster_averages
                 )
                 
-                # Display quick insights in a clean, number-focused format
-                st.markdown(quick_insights)
+                # Display quick insights
+                st.markdown(quick_insights, unsafe_allow_html=True)
                 
-                # Add toggle button for detailed analysis
-                if st.button("📊 Toggle Detailed Analysis", type="secondary"):
-                    st.session_state.show_detailed_analysis = not st.session_state.show_detailed_analysis
+                # Add space and center the toggle button
+                st.markdown("<br><br>", unsafe_allow_html=True)  # Add vertical space
+                col1, col2, col3 = st.columns([1,2,1])  # Create 3 columns, middle one is wider
+                with col2:  # Use middle column for the button
+                    if st.button("📊 Toggle Detailed Analysis", type="secondary", use_container_width=True):
+                        st.session_state.show_detailed_analysis = not st.session_state.show_detailed_analysis
                 
-                # Show detailed analysis only if toggled on
+                # Add more space before detailed analysis
+                st.markdown("<br><br>", unsafe_allow_html=True)
+                
                 if st.session_state.show_detailed_analysis:
                     st.divider()
                     st.subheader("📊 Detailed Analysis")
-                    
-                    # Generate detailed insights only if not already generated
                     if st.session_state.detailed_insights is None:
                         with st.spinner("Generating detailed analysis..."):
                             st.session_state.detailed_insights = generate_advanced_ai_insights(
@@ -256,73 +262,183 @@ if merchant_id:
                                 cluster_peers,
                                 cluster_averages
                             )
-                    
-                    # Display the stored detailed insights
                     st.markdown(st.session_state.detailed_insights)
-            
             except Exception as insight_err:
                 st.error(f"Error generating insights: {insight_err}")
 
+        with tab2:
+            # Performance Metrics
+            st.markdown("""
+                <style>
+                .performance-section {
+                    margin: 2rem 0;
+                    padding: 1rem;
+                    border-left: 4px solid #4dabf7;
+                }
+                .performance-title {
+                    color: #e0e0e0;
+                    font-size: 1.4rem;
+                    margin-bottom: 0.5rem;
+                }
+                .performance-metrics {
+                    display: flex;
+                    gap: 2rem;
+                    margin: 1rem 0;
+                }
+                .performance-metric {
+                    flex: 1;
+                }
+                .performance-value {
+                    color: #4dabf7;
+                    font-weight: 600;
+                }
+                .performance-average {
+                    color: #adb5bd;
+                }
+                .performance-status {
+                    margin-top: 0.5rem;
+                    padding: 0.25rem 0.5rem;
+                    border-radius: 4px;
+                    font-weight: 500;
+                }
+                .status-good {
+                    color: #2b8a3e;
+                }
+                .status-warning {
+                    color: #e67700;
+                }
+                .status-bad {
+                    color: #e03131;
+                }
+                .performance-details {
+                    padding: 1rem;
+                    border-radius: 4px;
+                    margin-top: 1rem;
+                }
+                .performance-detail-item {
+                    margin: 0.5rem 0;
+                    color: #b0b0b0;
+                }
+                .performance-detail-value {
+                    color: #e0e0e0;
+                    font-weight: 500;
+                }
+                </style>
+            """, unsafe_allow_html=True)
 
-        # Optionally display simple insights if checkbox is ticked
-        if show_simple_insights:
-            st.subheader("Rule-Based Insights (Simple)")
-            if comparison_df_local is not None:
-                try:
-                     simple_insights = generate_insights(comparison_df_local) # Use local comparison for simple rules
-                     if simple_insights:
-                          for i in simple_insights:
-                               st.info(i) # Use info boxes for simple insights
-                     else:
-                          st.info("No simple insights generated (performance might be good based on local comparison).")
-                except NameError:
-                     st.error("The function `generate_insights` seems to be missing or not imported correctly from insights_engine.py.")
-                     print("ERROR: `generate_insights` not found during call.")
-                except Exception as simple_insight_err:
-                     st.error(f"Error generating simple insights: {simple_insight_err}")
-                     print(f"ERROR generating simple insights: {simple_insight_err}\n{traceback.format_exc()}")
-            else:
-                 st.warning("Cannot generate simple insights as local comparison data is unavailable.")
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("### Local Market Position")
+                if comparison_df_local is not None:
+                    for _, row in comparison_df_local.iterrows():
+                        status_class = "status-good" if "✅" in str(row['Performance']) else "status-warning" if "⚠️" in str(row['Performance']) else "status-bad"
+                        st.markdown(f"""
+                        <div class="performance-section">
+                            <div class="performance-title">{row['Metric']}</div>
+                            <div class="performance-metrics">
+                                <div class="performance-metric">
+                                    <p>Your Value: <span class="performance-value">{row['Merchant Value']}</span></p>
+                                    <p>Local Average: <span class="performance-average">{row['Local Avg']}</span></p>
+                                </div>
+                                <div class="performance-metric">
+                                    <p class="performance-status {status_class}">{row['Performance']}</p>
+                                </div>
+                            </div>
+                            <div class="performance-details">
+                                <div class="performance-detail-item">
+                                    <span class="performance-detail-value">Impact:</span> {((row['Merchant Value'] - row['Local Avg']) / row['Local Avg'] * 100):.1f}% vs local average
+                                </div>
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
 
+            with col2:
+                st.markdown("### Cluster Comparison")
+                if comparison_df_cluster is not None:
+                    for _, row in comparison_df_cluster.iterrows():
+                        status_class = "status-good" if "✅" in str(row['Performance']) else "status-warning" if "⚠️" in str(row['Performance']) else "status-bad"
+                        st.markdown(f"""
+                        <div class="performance-section">
+                            <div class="performance-title">{row['Metric']}</div>
+                            <div class="performance-metrics">
+                                <div class="performance-metric">
+                                    <p>Your Value: <span class="performance-value">{row['Merchant Value']}</span></p>
+                                    <p>Cluster Average: <span class="performance-average">{row['Cluster Avg']}</span></p>
+                                </div>
+                                <div class="performance-metric">
+                                    <p class="performance-status {status_class}">{row['Performance']}</p>
+                                </div>
+                            </div>
+                            <div class="performance-details">
+                                <div class="performance-detail-item">
+                                    <span class="performance-detail-value">Impact:</span> {((row['Merchant Value'] - row['Cluster Avg']) / row['Cluster Avg'] * 100):.1f}% vs cluster average
+                                </div>
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
 
-        # --- Download Section ---
+        with tab3:
+            # Detailed Information
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.subheader("Business Profile")
+                profile_data = {
+                    "Industry": merchant_row.get('industry', 'N/A'),
+                    "Store Type": merchant_row.get('store_type', 'N/A'),
+                    "Location": merchant_row.get('city', 'N/A'),
+                    "Store Size": f"{merchant_row.get('store_size_sqft', 0)} sq ft",
+                    "Income Level": f"₹{merchant_row.get('income_level', 0):.2f}",
+                    "Rent % of Revenue": f"{merchant_row.get('rent_pct_revenue', 0)*100:.1f}%"
+                }
+                for key, value in profile_data.items():
+                    st.markdown(f"**{key}:** {value}")
+
+            with col2:
+                st.subheader("Peer Comparison")
+                if cluster_peers is not None and not cluster_peers.empty:
+                    st.markdown(f"**Similar Businesses in Your Cluster:** {len(cluster_peers)}")
+                    st.dataframe(
+                        cluster_peers[['merchant_id', 'city', 'store_type']].head(),
+                        use_container_width=True,
+                        hide_index=True
+                    )
+
+        # Download section at the bottom
         st.divider()
-        st.subheader("⬇️ Download Data")
+        st.subheader("⬇️ Download Reports")
         col_dl1, col_dl2, col_dl3 = st.columns(3)
+        
+        if comparison_df_local is not None:
+            col_dl1.download_button(
+                "📊 Local Comparison",
+                comparison_df_local.to_csv(index=False).encode('utf-8'),
+                f"{merchant_id}_local_comparison.csv",
+                "text/csv"
+            )
+        
+        if comparison_df_cluster is not None:
+            col_dl2.download_button(
+                "📈 Cluster Comparison",
+                comparison_df_cluster.to_csv(index=False).encode('utf-8'),
+                f"{merchant_id}_cluster_comparison.csv",
+                "text/csv"
+            )
+        
+        if st.session_state.detailed_insights:
+            col_dl3.download_button(
+                "📝 AI Insights",
+                st.session_state.detailed_insights,
+                f"{merchant_id}_insights.txt",
+                "text/plain"
+            )
 
-        # Ensure dataframes exist before attempting download button creation
-        if comparison_df_local is not None and not comparison_df_local.empty:
-             try:
-                  download_local = comparison_df_local.to_csv(index=False).encode('utf-8')
-                  col_dl1.download_button("Local Comparison CSV", download_local, f"{merchant_id}_local_comparison.csv", "text/csv", key="dl_local")
-             except Exception as e:
-                  col_dl1.error(f"Failed to create local CSV: {e}")
-        else:
-             col_dl1.info("No local comparison data to download.")
-
-        if comparison_df_cluster is not None and not comparison_df_cluster.empty:
-             try:
-                  download_cluster = comparison_df_cluster.to_csv(index=False).encode('utf-8')
-                  col_dl2.download_button("Cluster Comparison CSV", download_cluster, f"{merchant_id}_cluster_comparison.csv", "text/csv", key="dl_cluster")
-             except Exception as e:
-                  col_dl2.error(f"Failed to create cluster CSV: {e}")
-        else:
-             col_dl2.info("No cluster comparison data to download.")
-
-        # Ensure ai_insights string exists before trying to download
-        insights_text_to_download = "Insights could not be generated or were not calculated."
-        if 'ai_insights' in locals() and isinstance(ai_insights, str):
-             insights_text_to_download = ai_insights
-        try:
-             col_dl3.download_button("Download AI Insights TXT", insights_text_to_download, f"{merchant_id}_insights.txt", "text/plain", key="dl_insights")
-        except Exception as e:
-             col_dl3.error(f"Failed to create insights TXT: {e}")
-
-
-# --- Fallback message if no merchant is selected ---
-elif not merchant_id and merchant_id_list: # Only show if IDs exist but none selected
-    st.info("Select a Merchant ID from the sidebar to begin analysis.")
-elif not merchant_id_list:
-     # Message if no merchant IDs were loaded at all
-     st.error("No merchant data available to select from.")
-# The case where data loading fails critically is handled earlier by st.stop()
+else:
+    # Welcome screen when no merchant is selected
+    st.markdown("""
+        <div style='text-align: center; padding: 2rem;'>
+            <h2>Welcome to Merchant Insights</h2>
+            <p>Select a merchant from the sidebar to get started with AI-powered analysis.</p>
+        </div>
+    """, unsafe_allow_html=True)
