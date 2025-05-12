@@ -217,8 +217,11 @@ if merchant_id:
         st.divider()
         st.header("💡 Quick Insights")
 
-        # Add a button for detailed analysis
-        show_detailed_analysis = st.button("📊 Show Detailed Analysis", type="secondary")
+        # Initialize session state for detailed insights if not exists
+        if 'detailed_insights' not in st.session_state:
+            st.session_state.detailed_insights = None
+        if 'show_detailed_analysis' not in st.session_state:
+            st.session_state.show_detailed_analysis = False
 
         if merchant_row is not None:
             try:
@@ -234,19 +237,28 @@ if merchant_id:
                 # Display quick insights in a clean, number-focused format
                 st.markdown(quick_insights)
                 
-                # Show detailed analysis only if button is clicked
-                if show_detailed_analysis:
+                # Add toggle button for detailed analysis
+                if st.button("📊 Toggle Detailed Analysis", type="secondary"):
+                    st.session_state.show_detailed_analysis = not st.session_state.show_detailed_analysis
+                
+                # Show detailed analysis only if toggled on
+                if st.session_state.show_detailed_analysis:
                     st.divider()
                     st.subheader("📊 Detailed Analysis")
-                    with st.spinner("Generating detailed analysis..."):
-                        detailed_insights = generate_advanced_ai_insights(
-                            merchant_row,
-                            comparison_df_local,
-                            comparison_df_cluster,
-                            cluster_peers,
-                            cluster_averages
-                        )
-                        st.markdown(detailed_insights)
+                    
+                    # Generate detailed insights only if not already generated
+                    if st.session_state.detailed_insights is None:
+                        with st.spinner("Generating detailed analysis..."):
+                            st.session_state.detailed_insights = generate_advanced_ai_insights(
+                                merchant_row,
+                                comparison_df_local,
+                                comparison_df_cluster,
+                                cluster_peers,
+                                cluster_averages
+                            )
+                    
+                    # Display the stored detailed insights
+                    st.markdown(st.session_state.detailed_insights)
             
             except Exception as insight_err:
                 st.error(f"Error generating insights: {insight_err}")

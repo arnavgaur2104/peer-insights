@@ -3,34 +3,43 @@
 import pandas as pd
 import numpy as np
 import random
+from pathlib import Path
+import os
+from tqdm import tqdm
 
 # Set random seed for reproducibility
 random.seed(42)
 np.random.seed(42)
 
+# Constants
+CHUNK_SIZE = 10000  # Number of merchants to generate at once
+DATA_DIR = Path('data')
+DATA_DIR.mkdir(exist_ok=True)
+
 cities = ['Mumbai', 'Delhi', 'Bangalore', 'Hyderabad', 'Chennai']
 store_types = ['Mall', 'Street Front', 'Standalone']
 industries = ['Retail', 'Restaurant', 'Fashion']
 
-def generate_merchants(n_merchants=100):
+def generate_merchant_chunk(start_idx, n_merchants):
+    """Generate a chunk of merchant data."""
     merchants = []
-    for i in range(n_merchants): # Use index for unique ID
+    for i in range(n_merchants):
+        idx = start_idx + i
         city = random.choice(cities)
         pincode = random.randint(400001, 400100)
         store_type = random.choice(store_types)
         industry = random.choice(industries)
-        income_level = abs(np.random.normal(50000, 15000)) # Ensure non-negative
+        income_level = abs(np.random.normal(50000, 15000))
         rent_pct_revenue = np.random.uniform(0.05, 0.25)
         weather_preference = random.choice(['Rain Boost', 'Sunny Boost', 'None'])
 
-        # --- NEW: Add Store Size ---
+        # Store size based on type
         if store_type == 'Mall':
             store_size_sqft = np.random.randint(800, 5000)
         elif store_type == 'Street Front':
             store_size_sqft = np.random.randint(400, 2500)
-        else: # Standalone
+        else:  # Standalone
             store_size_sqft = np.random.randint(1000, 8000)
-        # --- END NEW ---
 
         # Industry-specific metrics
         if industry == 'Retail':
@@ -47,9 +56,7 @@ def generate_merchants(n_merchants=100):
             refund_rate = np.random.uniform(0.02, 0.15)
 
         merchants.append({
-            # --- MODIFIED: Use index for predictable ID ---
-            'merchant_id': f'M{1000+i}',
-            # --- END MODIFIED ---
+            'merchant_id': f'M{1000+idx}',
             'city': city,
             'pincode': pincode,
             'store_type': store_type,
@@ -60,32 +67,21 @@ def generate_merchants(n_merchants=100):
             'avg_txn_value': round(avg_txn_value, 2),
             'daily_txn_count': daily_txn_count,
             'refund_rate': round(refund_rate, 4),
-            # --- NEW ---
             'store_size_sqft': store_size_sqft
-             # --- END NEW ---
         })
+    return pd.DataFrame(merchants)
 
-    df = pd.DataFrame(merchants)
-    # Ensure data directory exists
-    import os
-    if not os.path.exists('data'):
-        os.makedirs('data')
-    df.to_csv('data/merchants.csv', index=False)
-    print("Merchants data generated and saved.")
-    return df
-
-def generate_competitors(merchants_df):
+def generate_competitor_chunk(merchant_chunk, comp_counter):
+    """Generate competitors for a chunk of merchants."""
     competitors = []
-    comp_counter = 10000
-    for idx, row in merchants_df.iterrows():
+    for _, row in merchant_chunk.iterrows():
         n_competitors = np.random.randint(3, 8)
         for _ in range(n_competitors):
             comp = row.copy()
-            # --- MODIFIED: Use counter for unique ID ---
             comp['merchant_id'] = f'C{comp_counter}'
             comp_counter += 1
-            # --- END MODIFIED ---
-            # Slightly vary competitor metrics
+            
+            # Vary competitor metrics
             comp['avg_txn_value'] *= np.random.uniform(0.9, 1.1)
             comp['daily_txn_count'] *= np.random.uniform(0.8, 1.2)
             comp['refund_rate'] *= np.random.uniform(0.8, 1.2)
@@ -99,23 +95,47 @@ def generate_competitors(merchants_df):
             comp['refund_rate'] = round(max(0, min(1, comp['refund_rate'])), 4)
             comp['income_level'] = round(max(0, comp['income_level']), 2)
             comp['rent_pct_revenue'] = round(max(0, comp['rent_pct_revenue']), 4)
-            comp['store_size_sqft'] = max(100, int(comp['store_size_sqft'])) # Min size 100
+            comp['store_size_sqft'] = max(100, int(comp['store_size_sqft']))
 
             competitors.append(comp)
+    return pd.DataFrame(competitors), comp_counter
 
-    comp_df = pd.DataFrame(competitors)
-    # Ensure data directory exists
-    import os
-    if not os.path.exists('data'):
-        os.makedirs('data')
-    comp_df.to_csv('data/competitors.csv', index=False)
-    print("Competitors data generated and saved.")
-    return comp_df
+def generate_data(n_merchants=100000):
+    """Generate merchant and competitor data in chunks."""
+    print(f"Generating {n_merchants} merchants and their competitors...")
+    
+    # Initialize counters and file paths
+    comp_counter = 10000
+    merchants_file = DATA_DIR / 'merchants.csv'
+    competitors_file = DATA_DIR / 'competitors.csv'
+    
+    # Clear existing files
+    for file in [merchants_file, competitors_file]:
+        if file.exists():
+            file.unlink()
+    
+    # Generate data in chunks
+    for start_idx in tqdm(range(0, n_merchants, CHUNK_SIZE)):
+        # Calculate chunk size
+        chunk_size = min(CHUNK_SIZE, n_merchants - start_idx)
+        
+        # Generate merchant chunk
+        merchant_chunk = generate_merchant_chunk(start_idx, chunk_size)
+        
+        # Generate competitor chunk
+        competitor_chunk, comp_counter = generate_competitor_chunk(merchant_chunk, comp_counter)
+        
+        # Save chunks to CSV
+        merchant_chunk.to_csv(merchants_file, mode='a', header=not merchants_file.exists(), index=False)
+        competitor_chunk.to_csv(competitors_file, mode='a', header=not competitors_file.exists(), index=False)
+        
+        # Clear memory
+        del merchant_chunk
+        del competitor_chunk
+    
+    print("Data generation complete!")
+    print(f"Merchants saved to: {merchants_file}")
+    print(f"Competitors saved to: {competitors_file}")
 
 if __name__ == "__main__":
-    # Ensure the data directory exists before generating
-    import os
-    if not os.path.exists('data'):
-        os.makedirs('data')
-    merchants_df = generate_merchants()
-    competitors_df = generate_competitors(merchants_df)
+    generate_data()

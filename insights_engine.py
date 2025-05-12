@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 import random
 import traceback
 import re
@@ -14,6 +15,31 @@ try:
 except Exception as e:
     print(f"Error configuring Gemini API: {e}")
     _gemini_api_configured = False
+
+def calculate_metric_impact(metric, merchant_value, avg_value):
+    """Calculate the impact score for a metric."""
+    if pd.isna(merchant_value) or pd.isna(avg_value):
+        return 0, 0
+    
+    # Calculate percentage difference
+    if metric in ['avg_txn_value', 'daily_txn_count', 'income_level']:
+        pct_diff = ((merchant_value - avg_value) / avg_value) * 100
+        is_better = merchant_value > avg_value
+    else:  # refund_rate, rent_pct_revenue
+        pct_diff = ((avg_value - merchant_value) / avg_value) * 100
+        is_better = merchant_value < avg_value
+    
+    return pct_diff, is_better
+
+def format_metric_comparison(metric, merchant_value, avg_value, pct_diff, is_better):
+    """Format metric comparison with proper units and formatting."""
+    if metric == 'avg_txn_value':
+        return f"₹{merchant_value:.2f} vs ₹{avg_value:.2f} ({pct_diff:+.1f}%)"
+    elif metric == 'daily_txn_count':
+        return f"{merchant_value:.0f} vs {avg_value:.0f} ({pct_diff:+.1f}%)"
+    elif metric in ['refund_rate', 'rent_pct_revenue']:
+        return f"{merchant_value*100:.1f}% vs {avg_value*100:.1f}% ({pct_diff:+.1f}%)"
+    return f"{merchant_value:.2f} vs {avg_value:.2f} ({pct_diff:+.1f}%)"
 
 def generate_insights(comparison_df):
     """Generate simple rule-based suggestions based on the performance comparison."""
@@ -73,56 +99,124 @@ def generate_insights(comparison_df):
 def generate_quick_insights(merchant_row, comparison_local, comparison_cluster, cluster_peers, cluster_averages):
     """Generate quick, number-focused insights for immediate merchant value"""
     
-    prompt = f"""As a payment analytics expert, provide a concise, number-focused analysis for this merchant:
-
-**Key Metrics:**
-- Merchant ID: {merchant_row.get('merchant_id', 'N/A')}
-- Industry: {merchant_row.get('industry', 'N/A')}
-- Location: {merchant_row.get('city', 'N/A')}
-
-**Current Performance:**
-- Average Transaction Value: ₹{merchant_row.get('avg_txn_value', 'N/A'):.2f}
-- Daily Transactions: {merchant_row.get('daily_txn_count', 'N/A')}
-- Refund Rate: {merchant_row.get('refund_rate', 'N/A')*100:.1f}%
-
-**Local Comparison:**
-{format_quick_comparison(comparison_local, 'Local')}
-
-**Cluster Comparison:**
-{format_quick_comparison(comparison_cluster, 'Cluster')}
-
-**Request:**
-Provide a concise analysis with:
-1. Top 3 key metrics that need attention (with specific numbers)
-2. One immediate action item for each metric
-3. One key strength (with numbers)
-4. One quick win opportunity (with numbers)
-
-Format the response EXACTLY as follows:
-- Use emojis for visual appeal
-- Include specific numbers in each point
-- Make it scannable and actionable
-- Focus on the most impactful metrics only
-- ALWAYS format each issue and action pair on its own line
-- Use proper line breaks between sections
-- Use markdown formatting for better readability
-
-Example format:
-
-**Key Issues & Actions:**
-🔍 Low avg transaction value (₹500 vs ₹800) → 💡 Bundle products to increase ticket size
-
-🔍 High refund rate (5% vs 2%) → 💡 Review product quality and return policy
-
-🔍 Low daily transactions (20 vs 35) → 💡 Launch loyalty program
-
-**Strengths:**
-✅ Key Strength: Excellent rent efficiency (15% vs 25% of revenue)
-
-**Quick Win:**
-🚀 Implement upselling (potential +₹200 per transaction)"""
-
-    return call_gemini_api(prompt)
+    # Initialize lists for different types of insights
+    critical_issues = []
+    opportunities = []
+    quick_wins = []
+    
+    # Process local comparisons
+    if comparison_local is not None and not comparison_local.empty:
+        for _, row in comparison_local.iterrows():
+            metric = row['Metric'].lower().replace(' ', '_')
+            merchant_value = row['Merchant Value']
+            local_avg = row['Local Avg']
+            
+            if pd.isna(merchant_value) or pd.isna(local_avg):
+                continue
+            
+            pct_diff, is_better = calculate_metric_impact(metric, merchant_value, local_avg)
+            
+            # Critical issues (significant negative impact)
+            if not is_better and abs(pct_diff) > 10:
+                if metric == 'avg_txn_value':
+                    critical_issues.append({
+                        'title': 'Low Transaction Value',
+                        'comparison': format_metric_comparison(metric, merchant_value, local_avg, pct_diff, is_better),
+                        'action': f"Increase by ₹{abs(merchant_value - local_avg):.2f} through bundling",
+                        'impact': f"Potential revenue increase: ₹{abs(merchant_value - local_avg) * merchant_row.get('daily_txn_count', 0):.2f} daily"
+                    })
+                elif metric == 'daily_txn_count':
+                    critical_issues.append({
+                        'title': 'Low Customer Footfall',
+                        'comparison': format_metric_comparison(metric, merchant_value, local_avg, pct_diff, is_better),
+                        'action': f"Add {abs(merchant_value - local_avg):.0f} customers through promotions",
+                        'impact': f"Potential revenue increase: ₹{abs(merchant_value - local_avg) * merchant_row.get('avg_txn_value', 0):.2f} daily"
+                    })
+                elif metric == 'refund_rate':
+                    critical_issues.append({
+                        'title': 'High Refund Rate',
+                        'comparison': format_metric_comparison(metric, merchant_value, local_avg, pct_diff, is_better),
+                        'action': f"Reduce by {abs(merchant_value - local_avg)*100:.1f}% through quality control",
+                        'impact': f"Potential savings: ₹{abs(merchant_value - local_avg) * merchant_row.get('avg_txn_value', 0) * merchant_row.get('daily_txn_count', 0):.2f} daily"
+                    })
+            
+            # Opportunities (significant positive impact)
+            elif is_better and abs(pct_diff) > 10:
+                if metric == 'avg_txn_value':
+                    opportunities.append({
+                        'title': 'Strong Transaction Value',
+                        'comparison': format_metric_comparison(metric, merchant_value, local_avg, pct_diff, is_better),
+                        'action': "Leverage to cross-sell premium products",
+                        'impact': f"Current advantage: ₹{abs(merchant_value - local_avg):.2f} per transaction"
+                    })
+                elif metric == 'daily_txn_count':
+                    opportunities.append({
+                        'title': 'High Customer Footfall',
+                        'comparison': format_metric_comparison(metric, merchant_value, local_avg, pct_diff, is_better),
+                        'action': "Increase basket size through upselling",
+                        'impact': f"Potential increase: ₹{merchant_value * merchant_row.get('avg_txn_value', 0) * 0.1:.2f} daily"
+                    })
+    
+    # Generate insights text
+    insights = []
+    
+    # Add merchant context
+    insights.append(f"## 📊 Performance Analysis for {merchant_row.get('industry', 'Business')}")
+    insights.append(f"Location: {merchant_row.get('city', 'N/A')} | Store Type: {merchant_row.get('store_type', 'N/A')}\n")
+    
+    # Add critical issues
+    if critical_issues:
+        insights.append("### 🔍 Critical Issues")
+        for issue in critical_issues[:3]:  # Top 3 issues
+            insights.append(f"**{issue['title']}**")
+            insights.append(f"- Current vs Average: {issue['comparison']}")
+            insights.append(f"- Action: {issue['action']}")
+            insights.append(f"- Impact: {issue['impact']}\n")
+    else:
+        insights.append("### ✅ No Critical Issues Detected\n")
+    
+    # Add opportunities
+    if opportunities:
+        insights.append("### 💡 Growth Opportunities")
+        for opp in opportunities[:2]:  # Top 2 opportunities
+            insights.append(f"**{opp['title']}**")
+            insights.append(f"- Current vs Average: {opp['comparison']}")
+            insights.append(f"- Action: {opp['action']}")
+            insights.append(f"- Impact: {opp['impact']}\n")
+    
+    # Add quick wins
+    insights.append("### 🚀 Quick Wins")
+    
+    # Quick win 1: Upselling opportunity
+    if merchant_row.get('avg_txn_value', 0) < merchant_row.get('income_level', 0) * 0.1:
+        target_value = merchant_row.get('income_level', 0) * 0.1
+        current_value = merchant_row.get('avg_txn_value', 0)
+        insights.append("1. **Upselling Opportunity**")
+        insights.append(f"   - Current: ₹{current_value:.2f}")
+        insights.append(f"   - Target: ₹{target_value:.2f}")
+        insights.append(f"   - Action: Train staff on premium product features")
+        insights.append(f"   - Expected Impact: +₹{target_value - current_value:.2f} per transaction\n")
+    
+    # Quick win 2: Footfall boost
+    if merchant_row.get('daily_txn_count', 0) < 50:
+        current_count = merchant_row.get('daily_txn_count', 0)
+        target_count = int(current_count * 1.2)  # 20% increase
+        insights.append("2. **Footfall Boost**")
+        insights.append(f"   - Current: {current_count} customers")
+        insights.append(f"   - Target: {target_count} customers")
+        insights.append("   - Action: Launch 2-week promotion with 10% discount")
+        insights.append(f"   - Expected Impact: +{target_count - current_count} customers daily\n")
+    
+    # Add cluster insights
+    if cluster_peers is not None and not cluster_peers.empty:
+        insights.append("### 🔄 Cluster Insights")
+        top_performers = cluster_peers.nlargest(3, 'avg_txn_value')
+        if not top_performers.empty:
+            insights.append("**Top Performers in Your Cluster:**")
+            for _, peer in top_performers.iterrows():
+                insights.append(f"- {peer['store_type']} in {peer['city']}: ₹{peer['avg_txn_value']:.2f} avg. transaction")
+    
+    return "\n".join(insights)
 
 def generate_advanced_ai_insights(merchant_row, comparison_local, comparison_cluster, cluster_peers, cluster_averages):
     """Generate detailed analysis when requested"""
