@@ -5,6 +5,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np # Import numpy
 import traceback # Import traceback for error printing
+import plotly.graph_objects as go
 
 # Use the new comparison function and insight engine
 # Ensure these imports don't implicitly call Streamlit functions before set_page_config
@@ -12,13 +13,16 @@ import traceback # Import traceback for error printing
 try:
     # Assuming compare_merchants.py has the corrected get_comparison_data function
     from compare_merchants import get_comparison_data
-    # Assuming insights_engine.py has the corrected functions
-    from insights_engine import generate_advanced_ai_insights, generate_insights, generate_quick_insights, format_quick_comparison
+    # Update insights_engine imports to only include what we need
+    from insights_engine import (
+        generate_crisp_insights,
+        format_insights_for_display
+    )
 except ImportError as import_err:
-     # Display error in the app if imports fail
-     st.set_page_config(page_title="Import Error", layout="centered") # Minimal config for error
-     st.error(f"Error importing necessary functions: {import_err}. Make sure compare_merchants.py and insights_engine.py are present and correct.")
-     st.stop() # Stop execution if imports fail
+    # Display error in the app if imports fail
+    st.set_page_config(page_title="Import Error", layout="centered")
+    st.error(f"Error importing necessary functions: {import_err}. Make sure compare_merchants.py and insights_engine.py are present and correct.")
+    st.stop()
 
 
 # --- Set Page Config FIRST ---
@@ -34,6 +38,10 @@ if 'detailed_insights' not in st.session_state:
     st.session_state.detailed_insights = None
 if 'show_detailed_analysis' not in st.session_state:
     st.session_state.show_detailed_analysis = False
+if 'show_visual_insights' not in st.session_state:
+    st.session_state.show_visual_insights = False
+if 'crisp_insights' not in st.session_state:
+    st.session_state.crisp_insights = None
 
 # Add custom CSS for better styling
 st.markdown("""
@@ -156,16 +164,23 @@ with st.sidebar:
             sorted(filtered_merchants),
             index=0
         )
+        
+        # Reset session state when merchant changes
+        if 'last_merchant' not in st.session_state:
+            st.session_state.last_merchant = None
+            
+        if merchant_id != st.session_state.last_merchant:
+            st.session_state.crisp_insights = None
+            st.session_state.detailed_insights = None
+            st.session_state.show_detailed_analysis = False
+            st.session_state.show_visual_insights = False
+            st.session_state.last_merchant = merchant_id
     else:
         st.warning("No merchants found matching your search.")
         merchant_id = None
 
     st.divider()
     
-    # Add configuration options in an expander
-    with st.expander("⚙️ Settings", expanded=False):
-        show_simple_insights = st.checkbox("Show Simple Rule-Based Insights", value=False)
-        st.info("Toggle additional insights and analysis options here.")
 
     # Add clustering explanation
     with st.expander("ℹ️ Understanding Your Analysis", expanded=False):
@@ -224,45 +239,124 @@ if merchant_id:
             )
 
         # Main content in tabs
-        tab1, tab2, tab3 = st.tabs(["📊 Quick Insights", "📈 Performance", "📋 Details"])
+        tab1, tab2, tab3 = st.tabs(["📊 Key Insights", "📈 Performance", "📋 Details"])
 
         with tab1:
             # Quick Insights
             try:
-                quick_insights = generate_quick_insights(
-                    merchant_row,
-                    comparison_df_local,
-                    comparison_df_cluster,
-                    cluster_peers,
-                    cluster_averages
-                )
+                st.markdown("### 📊 Key Insights")
                 
-                # Display quick insights
-                st.markdown(quick_insights, unsafe_allow_html=True)
+                # Initialize session state for insights if not exists
+                if 'crisp_insights' not in st.session_state:
+                    st.session_state.crisp_insights = None
+                if 'impact_data' not in st.session_state:
+                    st.session_state.impact_data = None
                 
-                # Add space and center the toggle button
-                st.markdown("<br><br>", unsafe_allow_html=True)  # Add vertical space
-                col1, col2, col3 = st.columns([1,2,1])  # Create 3 columns, middle one is wider
-                with col2:  # Use middle column for the button
-                    if st.button("📊 Toggle Detailed Analysis", type="secondary", use_container_width=True):
-                        st.session_state.show_detailed_analysis = not st.session_state.show_detailed_analysis
+                # Only generate insights if they don't exist in session state
+                if st.session_state.crisp_insights is None:
+                    with st.spinner("Generating insights..."):
+                        st.session_state.crisp_insights, st.session_state.impact_data = generate_crisp_insights(
+                            merchant_row,
+                            comparison_df_local,
+                            comparison_df_cluster,
+                            cluster_peers,
+                            cluster_averages
+                        )
                 
-                # Add more space before detailed analysis
-                st.markdown("<br><br>", unsafe_allow_html=True)
+                # Format insights for display
+                formatted_insights = format_insights_for_display(st.session_state.crisp_insights)
                 
-                if st.session_state.show_detailed_analysis:
-                    st.divider()
-                    st.subheader("📊 Detailed Analysis")
-                    if st.session_state.detailed_insights is None:
-                        with st.spinner("Generating detailed analysis..."):
-                            st.session_state.detailed_insights = generate_advanced_ai_insights(
-                                merchant_row,
-                                comparison_df_local,
-                                comparison_df_cluster,
-                                cluster_peers,
-                                cluster_averages
-                            )
-                    st.markdown(st.session_state.detailed_insights)
+                # Display each insight with its corresponding graph
+                for i, (insight_html, metric, insight_index) in enumerate(formatted_insights):
+                    # Display the insight
+                    st.markdown(insight_html, unsafe_allow_html=True)
+                    
+                    # Find and display the corresponding impact data
+                    if st.session_state.impact_data:
+                        for data in st.session_state.impact_data:
+                            if data['metric'] == metric and data['insight_index'] == insight_index:
+                                # Create bar chart
+                                fig = go.Figure()
+                                
+                                # Add bars for current, expected, local average, and cluster average
+                                x_labels = ['Current', 'Local Avg']
+                                y_values = [data['current'], data['local_avg']]
+                                colors = ['#4dabf7', '#adb5bd']
+                                
+                                # Add cluster average if available
+                                if data['cluster_avg'] is not None:
+                                    x_labels.append('Cluster Avg')
+                                    y_values.append(data['cluster_avg'])
+                                    colors.append('#e67700')
+                                
+                                # Only add expected value for non-income metrics
+                                if data['metric'] != 'Income Level':
+                                    x_labels.insert(1, 'Expected')
+                                    y_values.insert(1, data['expected'])
+                                    colors.insert(1, '#2b8a3e')
+                                
+                                fig.add_trace(go.Bar(
+                                    x=x_labels,
+                                    y=y_values,
+                                    text=[f'{v:.2f}' for v in y_values],
+                                    textposition='auto',
+                                    marker_color=colors,
+                                    name=metric
+                                ))
+                                
+                                # Update layout
+                                fig.update_layout(
+                                    title=f"{metric} Analysis",
+                                    xaxis_title="",
+                                    yaxis_title="Value",
+                                    showlegend=False,
+                                    height=300,
+                                    margin=dict(l=20, r=20, t=40, b=20),
+                                    plot_bgcolor='rgba(0,0,0,0)',
+                                    paper_bgcolor='rgba(0,0,0,0)',
+                                    font=dict(color='#e0e0e0'),
+                                    bargap=0.3
+                                )
+                                
+                                # Add annotations for percentage changes only for non-income metrics
+                                if data['metric'] != 'Income Level':
+                                    fig.add_annotation(
+                                        x='Expected',
+                                        y=data['expected'],
+                                        text=f'{data["impact_pct"]*100:+.1f}%',
+                                        showarrow=True,
+                                        arrowhead=1,
+                                        ax=0,
+                                        ay=-40,
+                                        font=dict(color='#2b8a3e', size=12)
+                                    )
+                                
+                                # Customize axes
+                                fig.update_yaxes(
+                                    gridcolor='rgba(128, 128, 128, 0.2)',
+                                    zerolinecolor='rgba(128, 128, 128, 0.2)',
+                                    showgrid=True
+                                )
+                                fig.update_xaxes(showgrid=False)
+                                
+                                # Display the chart with a unique key
+                                st.plotly_chart(fig, use_container_width=True, key=f"impact_chart_{insight_index}")
+                                
+                                # Add metric details with cluster average
+                                details_html = f"""
+                                <div style='margin-top: -20px; margin-bottom: 30px;'>
+                                    <p style='color: #e0e0e0; font-size: 0.9em;'>
+                                        <span style='color: #4dabf7;'>●</span> Current: {data['current']:.2f} | 
+                                """
+                                if data['metric'] != 'Income Level':
+                                    details_html += f"<span style='color: #2b8a3e;'>●</span> Expected: {data['expected']:.2f} | "
+                                details_html += f"<span style='color: #adb5bd;'>●</span> Local Average: {data['local_avg']:.2f}"
+                                if data['cluster_avg'] is not None:
+                                    details_html += f" | <span style='color: #e67700;'>●</span> Cluster Average: {data['cluster_avg']:.2f}"
+                                details_html += "</p></div>"
+                                
+                                st.markdown(details_html, unsafe_allow_html=True)
+                                break
             except Exception as insight_err:
                 st.error(f"Error generating insights: {insight_err}")
 
@@ -388,9 +482,7 @@ if merchant_id:
                     "Industry": merchant_row.get('industry', 'N/A'),
                     "Store Type": merchant_row.get('store_type', 'N/A'),
                     "Location": merchant_row.get('city', 'N/A'),
-                    "Store Size": f"{merchant_row.get('store_size_sqft', 0)} sq ft",
-                    "Income Level": f"₹{merchant_row.get('income_level', 0):.2f}",
-                    "Rent % of Revenue": f"{merchant_row.get('rent_pct_revenue', 0)*100:.1f}%"
+                    "Income Level": f"₹{merchant_row.get('income_level', 0):.2f}"
                 }
                 for key, value in profile_data.items():
                     st.markdown(f"**{key}:** {value}")
@@ -442,3 +534,47 @@ else:
             <p>Select a merchant from the sidebar to get started with AI-powered analysis.</p>
         </div>
     """, unsafe_allow_html=True)
+
+def format_insights_for_display(insights_text, impact_data=None):
+    """Format insights with proper spacing and line breaks for Streamlit display."""
+    # Split into individual insights
+    insights = insights_text.strip().split('\n\n')
+    formatted_insights = []
+    
+    for i, insight in enumerate(insights):
+        if not insight.strip():
+            continue
+            
+        # Split the insight into lines
+        lines = insight.strip().split('\n')
+        if len(lines) >= 3:  # Ensure we have all three parts
+            # Get the metric from the insight
+            metric = None
+            insight_text = lines[0].lower()
+            
+            # More comprehensive metric detection with unique identifiers
+            if 'transaction value' in insight_text or 'avg' in insight_text or 'value' in insight_text:
+                metric = 'Avg Txn Value'
+            elif 'daily count' in insight_text:
+                metric = 'Daily Txn Count (Count)'
+            elif 'daily txns' in insight_text:
+                metric = 'Daily Txn Count (Txns)'
+            elif 'daily' in insight_text or 'count' in insight_text or 'transaction' in insight_text or 'customers' in insight_text:
+                metric = 'Daily Txn Count'
+            elif 'refund' in insight_text or 'rate' in insight_text:
+                metric = 'Refund Rate'
+            elif 'income' in insight_text or 'level' in insight_text:
+                metric = 'Income Level'
+            
+            # Only add to formatted insights if we found a metric
+            if metric:
+                formatted_insight = f"""
+                <div style='margin: 10px 0; padding: 15px; border-radius: 8px; border: 1px solid #4dabf7; background: transparent;'>
+                    <p style='margin: 5px 0; color: #e0e0e0;'>{lines[0]}</p>
+                    <p style='margin: 5px 0; color: #e0e0e0;'>{lines[1]}</p>
+                    <p style='margin: 5px 0; color: #e0e0e0;'>{lines[2]}</p>
+                </div>
+                """
+                formatted_insights.append((formatted_insight, metric, i))  # Add index for unique key
+    
+    return formatted_insights

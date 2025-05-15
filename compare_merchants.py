@@ -11,7 +11,7 @@ import multiprocessing
 
 # --- Define metrics for comparison and clustering ---
 # Ensure these match columns in generate_data.py
-NUMERIC_METRICS = ['avg_txn_value', 'daily_txn_count', 'refund_rate', 'rent_pct_revenue', 'income_level', 'store_size_sqft']
+NUMERIC_METRICS = ['avg_txn_value', 'daily_txn_count', 'refund_rate', 'income_level']
 CATEGORICAL_METRICS = ['store_type'] # Add more if needed
 ALL_METRICS = NUMERIC_METRICS + CATEGORICAL_METRICS
 
@@ -177,9 +177,9 @@ def get_comparison_data(merchant_id, merchants_df, competitors_df):
              if pd.isna(competitor_value):
                   performance = 'N/A' # Cannot compare
              # Define which metrics are 'higher is better' vs 'lower is better'
-             elif metric in ['avg_txn_value', 'daily_txn_count', 'income_level', 'store_size_sqft']:
+             elif metric in ['avg_txn_value', 'daily_txn_count', 'income_level']:
                  performance = '✅ Above Avg' if merchant_value >= competitor_value else '❌ Below Avg'
-             elif metric in ['refund_rate', 'rent_pct_revenue']:
+             elif metric in ['refund_rate']:
                  performance = '✅ Below Avg' if merchant_value <= competitor_value else '❌ Above Avg'
              else:
                  performance = 'N/A' # Metric type not defined for comparison

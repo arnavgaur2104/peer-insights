@@ -22,7 +22,7 @@ def calculate_metric_impact(metric, merchant_value, avg_value):
         return 0, 0
     
     # Calculate percentage difference
-    if metric in ['avg_txn_value', 'daily_txn_count', 'income_level']:
+    if metric in ['avg_txn_value', 'daily_txn_count']:
         pct_diff = ((merchant_value - avg_value) / avg_value) * 100
         is_better = merchant_value > avg_value
     else:  # refund_rate, rent_pct_revenue
@@ -41,204 +41,278 @@ def format_metric_comparison(metric, merchant_value, avg_value, pct_diff, is_bet
         return f"{merchant_value*100:.1f}% vs {avg_value*100:.1f}% ({pct_diff:+.1f}%)"
     return f"{merchant_value:.2f} vs {avg_value:.2f} ({pct_diff:+.1f}%)"
 
-def generate_insights(comparison_df):
-    """Generate simple rule-based suggestions based on the performance comparison."""
-    insights = []
-    if comparison_df is None or comparison_df.empty:
-        print("Warning: generate_insights called with None or empty comparison_df.")
-        return ["Comparison data is missing or empty."]
+@st.cache_data(ttl=3600)  # Cache for 1 hour
+def call_gemini_api(prompt, model_name="gemini-1.5-flash"):
+    """Calls the configured Google Generative AI model (Gemini)."""
+    if not _gemini_api_configured:
+        return "### AI Analysis Error:\nGoogle API Key not configured or configuration failed."
 
-    expected_cols = ['Metric', 'Merchant Value', 'Performance']
-    if len(comparison_df.columns) > 2:
-        avg_col_name = comparison_df.columns[2]
-        expected_cols.append(avg_col_name)
-    else:
-        print("Warning: Comparison DataFrame has fewer than 3 columns in generate_insights.")
-        avg_col_name = None
+    try:
+        model = genai.GenerativeModel(model_name)
+        response = model.generate_content(prompt)
+        
+        if response.parts:
+            return response.text
+        else:
+            return "### AI Analysis Error:\nNo response generated from the AI model."
+            
+    except Exception as e:
+        return f"### AI Analysis Error:\nAn error occurred: {str(e)}"
 
-    if not all(col in comparison_df.columns for col in expected_cols):
-        missing = [col for col in expected_cols if col not in comparison_df.columns]
-        print(f"Warning: Missing expected columns in comparison_df for generate_insights: {missing}")
-        return [f"Comparison data is incomplete (missing: {missing})."]
+def generate_impact_visualization(merchant_row, comparison_local, comparison_cluster, response=None):
+    """Generate data for impact visualization."""
+    if comparison_local is None:
+        return None
 
-    for idx, row in comparison_df.iterrows():
-        try:
-            metric_label = row['Metric']
-            merchant_value = row['Merchant Value']
-            competitor_avg = row.get(avg_col_name, 'N/A') if avg_col_name else 'N/A'
-            performance = row['Performance']
-
-            if pd.isna(performance) or '✅' in str(performance) or 'N/A' in str(performance):
-                continue
-
-            metric_key = metric_label.lower().replace(' ', '_')
-            comp_avg_str = 'N/A'
-            if pd.notna(competitor_avg) and isinstance(competitor_avg, (int, float)):
-                if metric_key in ['refund_rate', 'rent_pct_revenue']:
-                    comp_avg_str = f"{competitor_avg*100:.1f}%"
-                else:
-                    comp_avg_str = f"{competitor_avg:.2f}"
-
-            if metric_key == 'avg_txn_value':
-                insights.append(f"💡 **Avg Transaction Value:** Consider bundling products or offering small upsells to increase value (Competitor avg: {comp_avg_str}).")
-            elif metric_key == 'daily_txn_count':
-                insights.append(f"💡 **Daily Transactions:** Explore promotions, loyalty programs, or better signage to increase customer visits (Competitor avg: {comp_avg_str}).")
-            elif metric_key == 'refund_rate':
-                insights.append(f"⚠️ **Refund Rate:** High refund rate detected. Review product quality or return policy clarity (Competitor avg: {comp_avg_str}).")
-            elif metric_key == 'rent_pct_revenue':
-                insights.append(f"⚠️ **Rent Cost:** High rent percentage detected. Consider operational efficiencies or renegotiating rent (Competitor avg: {comp_avg_str} of revenue).")
-
-        except Exception as e:
-            print(f"Error processing row {idx} in generate_insights: {e}")
+    impact_data = []
+    
+    # Split insights into individual blocks
+    insights = response.strip().split('\n\n')
+    
+    for i, insight_block in enumerate(insights):
+        if not insight_block.strip():
             continue
+            
+        lines = insight_block.strip().split('\n')
+        if len(lines) < 3:
+            continue
+            
+        # Extract metric and impact percentage
+        metric = None
+        impact_pct = None
+        
+        # Determine metric from the first line using comprehensive detection
+        insight_text = lines[0].lower()
+        if 'transaction value' in insight_text or 'avg' in insight_text or 'value' in insight_text:
+            metric = 'Avg Txn Value'
+        elif 'daily count' in insight_text:
+            metric = 'Daily Txn Count (Count)'
+        elif 'daily txns' in insight_text:
+            metric = 'Daily Txn Count (Txns)'
+        elif 'daily' in insight_text or 'count' in insight_text or 'transaction' in insight_text or 'customers' in insight_text:
+            metric = 'Daily Txn Count'
+        elif 'refund' in insight_text or 'rate' in insight_text:
+            metric = 'Refund Rate'
+        elif 'income' in insight_text or 'level' in insight_text:
+            metric = 'Income Level'
+            
+        # Extract impact percentage from the last line
+        if '📈 IMPACT:' in lines[2]:
+            match = re.search(r'(\d+)%', lines[2])
+            if match:
+                impact_pct = float(match.group(1)) / 100
+                
+        if metric and impact_pct is not None:
+            # Get current and local average values
+            local_row = comparison_local[comparison_local['Metric'] == 'Daily Txn Count']  # Use base metric for data
+            if not local_row.empty:
+                current_value = local_row.iloc[0]['Merchant Value']
+                local_avg = local_row.iloc[0]['Local Avg']
+                
+                # Get cluster average if available
+                cluster_avg = None
+                if comparison_cluster is not None:
+                    cluster_row = comparison_cluster[comparison_cluster['Metric'] == 'Daily Txn Count']
+                    if not cluster_row.empty:
+                        cluster_avg = cluster_row.iloc[0]['Cluster Avg']
+                
+                # Calculate expected value based on impact
+                if metric == 'Income Level':
+                    expected_value = current_value
+                elif metric in ['Avg Txn Value', 'Daily Txn Count', 'Daily Txn Count (Count)', 'Daily Txn Count (Txns)']:
+                    expected_value = current_value * (1 + impact_pct)
+                else:  # Refund Rate
+                    expected_value = current_value * (1 - impact_pct)
+                
+                impact_data.append({
+                    'metric': metric,
+                    'current': current_value,
+                    'expected': expected_value,
+                    'local_avg': local_avg,
+                    'cluster_avg': cluster_avg,
+                    'impact_pct': impact_pct,
+                    'insight_index': i  # Add index for unique identification
+                })
+    
+    return impact_data
 
-    if not insights:
-        insights.append("✅ Great! No major performance issues detected compared to local competitors based on basic rules.")
-    return insights
+def generate_crisp_insights(merchant_row, comparison_local, comparison_cluster, cluster_peers, cluster_averages):
+    """Generate concise, actionable insights using Gemini AI"""
+    
+    # Format the data for the prompt with better aesthetics
+    merchant_profile = f"""
+    🏪 Business Profile:
+    ──────────────────────────────
+    • Industry: {merchant_row.get('industry', 'N/A')}
+    • Store Type: {merchant_row.get('store_type', 'N/A')}
+    • Location: {merchant_row.get('city', 'N/A')}
+    • Area Income Level: ₹{merchant_row.get('income_level', 0):.2f} per month
+    ──────────────────────────────
+    """
+
+    # Format performance metrics with better aesthetics
+    performance_metrics = []
+    if comparison_local is not None:
+        for _, row in comparison_local.iterrows():
+            metric = row['Metric']
+            if 'income' in metric.lower():
+                continue
+                
+            merchant_value = row['Merchant Value']
+            local_avg = row['Local Avg']
+            performance = row['Performance']
+            gap = ((merchant_value - local_avg) / local_avg) * 100
+            
+            # Add context about whether the metric is good or bad
+            metric_context = ""
+            if metric == 'Avg Txn Value':
+                if gap > 0:
+                    metric_context = " (Good: Higher is better)"
+                else:
+                    metric_context = " (Issue: Lower than average)"
+            elif metric == 'Daily Txn Count':
+                if gap > 0:
+                    metric_context = " (Good: Higher is better)"
+                else:
+                    metric_context = " (Issue: Lower than average)"
+            elif metric == 'Refund Rate':
+                if gap < 0:
+                    metric_context = " (Good: Lower is better)"
+                else:
+                    metric_context = " (Issue: Higher than average)"
+            
+            performance_metrics.append(f"""
+            📊 {metric}{metric_context}
+            ──────────────────────────────
+            • Your Value: {merchant_value:.2f}
+            • Local Average: {local_avg:.2f}
+            • Performance: {performance}
+            • Gap: {gap:+.1f}%
+            ──────────────────────────────
+            """)
+
+    # Create a concise prompt for Gemini with better formatting
+    prompt = f"""As a retail business consultant, provide <= 3 key, actionable insights for this merchant. Keep each insight to 3 lines maximum:
+
+{merchant_profile}
+
+📈 Current Performance:
+{''.join(performance_metrics)}
+
+Format each insight using **exactly** this structure, with a **blank line between each insight**:
+
+💪 STRENGTH: High avg transaction
+💡 ACTION: Offer combo meals
+📈 IMPACT: Boost by 5%
+
+OR
+
+🎯 OPPORTUNITY: Low daily count
+💡 ACTION: Run lunch specials
+📈 IMPACT: Increase by 15%
+
+Rules:
+- Keep each line under 40 characters
+- Use specific numbers
+- Always give specific expected percentage change in impact
+- Focus on immediate actions
+- Avoid complex solutions
+- Use simple language
+- Be direct and clear
+- For income level, suggest how to better serve the local demographic
+- DO NOT compare income levels between merchants
+- Focus on how to better serve the local market
+- Focus on transaction value, customer count, and refund rates
+- For high avg transaction value, suggest how to leverage it
+- For low avg transaction value, suggest how to increase it
+- For high refund rate, suggest how to reduce it
+- For low daily transactions, suggest how to increase footfall
+- Always give specific expected percentage change in impact
+- IMPORTANT: Keep the emoji at the start of each line
+- IMPORTANT: Keep the format exactly as shown in the examples
+- IMPORTANT: Add a blank line between different insights
+- IMPORTANT: Keep each insight group together without extra lines
+
+Use these emojis:
+💪 for strengths
+🎯 for opportunities
+💡 for actions
+📈 for impact
+💰 for costs
+✨ for wins
+🏆 for achievements
+⚠️ for warnings
+
+Make it super concise and actionable and personalized for each merchant's demographic and industry!"""
+
+    try:
+        # Call Gemini API
+        raw_response = call_gemini_api(prompt)
+        print(raw_response)
+        response = reformat_insights_multiline(raw_response)
+        
+        # Generate impact visualization data with the extracted insights
+        impact_data = generate_impact_visualization(merchant_row, comparison_local, comparison_cluster, response)
+        
+        return response, impact_data
+    except Exception as e:
+        return f"Error generating insights: {str(e)}", None
+
+def format_impact_visualization(impact_data):
+    """Format impact visualization data for display."""
+    if not impact_data:
+        return ""
+        
+    formatted = "### Expected Impact of Actions\n\n"
+    for data in impact_data:
+        metric = data['metric']
+        current = data['current']
+        expected = data['expected']
+        change_pct = ((expected - current) / current) * 100
+        
+        formatted += f"**{metric}:**\n"
+        formatted += f"- Current: {current:.2f}\n"
+        formatted += f"- Expected: {expected:.2f}\n"
+        formatted += f"- Change: {change_pct:+.1f}%\n\n"
+    
+    return formatted
 
 def generate_quick_insights(merchant_row, comparison_local, comparison_cluster, cluster_peers, cluster_averages):
     """Generate quick, number-focused insights for immediate merchant value"""
     
-    # Initialize lists for different types of insights
-    critical_issues = []
-    opportunities = []
-    quick_wins = []
-    
-    # Process local comparisons
-    if comparison_local is not None and not comparison_local.empty:
-        for _, row in comparison_local.iterrows():
-            metric = row['Metric'].lower().replace(' ', '_')
-            merchant_value = row['Merchant Value']
-            local_avg = row['Local Avg']
-            
-            if pd.isna(merchant_value) or pd.isna(local_avg):
-                continue
-            
-            pct_diff, is_better = calculate_metric_impact(metric, merchant_value, local_avg)
-            
-            # Critical issues (significant negative impact)
-            if not is_better and abs(pct_diff) > 10:
-                if metric == 'avg_txn_value':
-                    critical_issues.append({
-                        'title': 'Low Transaction Value',
-                        'comparison': format_metric_comparison(metric, merchant_value, local_avg, pct_diff, is_better),
-                        'action': f"Increase by ₹{abs(merchant_value - local_avg):.2f} through bundling",
-                        'impact': f"Potential revenue increase: ₹{abs(merchant_value - local_avg) * merchant_row.get('daily_txn_count', 0):.2f} daily"
-                    })
-                elif metric == 'daily_txn_count':
-                    critical_issues.append({
-                        'title': 'Low Customer Footfall',
-                        'comparison': format_metric_comparison(metric, merchant_value, local_avg, pct_diff, is_better),
-                        'action': f"Add {abs(merchant_value - local_avg):.0f} customers through promotions",
-                        'impact': f"Potential revenue increase: ₹{abs(merchant_value - local_avg) * merchant_row.get('avg_txn_value', 0):.2f} daily"
-                    })
-                elif metric == 'refund_rate':
-                    critical_issues.append({
-                        'title': 'High Refund Rate',
-                        'comparison': format_metric_comparison(metric, merchant_value, local_avg, pct_diff, is_better),
-                        'action': f"Reduce by {abs(merchant_value - local_avg)*100:.1f}% through quality control",
-                        'impact': f"Potential savings: ₹{abs(merchant_value - local_avg) * merchant_row.get('avg_txn_value', 0) * merchant_row.get('daily_txn_count', 0):.2f} daily"
-                    })
-            
-            # Opportunities (significant positive impact)
-            elif is_better and abs(pct_diff) > 10:
-                if metric == 'avg_txn_value':
-                    opportunities.append({
-                        'title': 'Strong Transaction Value',
-                        'comparison': format_metric_comparison(metric, merchant_value, local_avg, pct_diff, is_better),
-                        'action': "Leverage to cross-sell premium products",
-                        'impact': f"Current advantage: ₹{abs(merchant_value - local_avg):.2f} per transaction"
-                    })
-                elif metric == 'daily_txn_count':
-                    opportunities.append({
-                        'title': 'High Customer Footfall',
-                        'comparison': format_metric_comparison(metric, merchant_value, local_avg, pct_diff, is_better),
-                        'action': "Increase basket size through upselling",
-                        'impact': f"Potential increase: ₹{merchant_value * merchant_row.get('avg_txn_value', 0) * 0.1:.2f} daily"
-                    })
-    
-    # Generate insights text
-    insights = []
-    
-    # Add merchant context
-    insights.append(f"## 📊 Performance Analysis for {merchant_row.get('industry', 'Business')}")
-    insights.append(f"Location: {merchant_row.get('city', 'N/A')} | Store Type: {merchant_row.get('store_type', 'N/A')}\n")
-    
-    # Add critical issues (red background)
-    if critical_issues:
-        insights.append("### 🔍 Critical Issues")
-        for issue in critical_issues[:3]:  # Top 3 issues
-            insights.append(f"""
-<div style='background-color: rgba(224, 49, 49, 0.1); padding: 1rem; border-radius: 5px; border-left: 4px solid #e03131;'>
-**{issue['title']}**  
-Current vs Average: {issue['comparison']}  
-💡 {issue['action']}  
-Impact: {issue['impact']}
-</div>
-""")
-    else:
-        insights.append("### ✅ No Critical Issues Detected\n")
-    
-    # Add opportunities (green background)
-    if opportunities:
-        insights.append("### 💡 Growth Opportunities")
-        for opp in opportunities[:2]:  # Top 2 opportunities
-            insights.append(f"""
-<div style='background-color: rgba(43, 138, 62, 0.1); padding: 1rem; border-radius: 5px; border-left: 4px solid #2b8a3e;'>**{opp['title']}**  
-Current vs Average: {opp['comparison']}  
-💡 {opp['action']}  
-Impact: {opp['impact']}
-</div>
-""".replace('\n', '<br>'))
-    
-    # Add quick wins (blue background)
-    insights.append("### 🚀 Quick Wins")
-    
-    # Quick win 1: Upselling opportunity
-    if merchant_row.get('avg_txn_value', 0) < merchant_row.get('income_level', 0) * 0.1:
-        target_value = merchant_row.get('income_level', 0) * 0.1
-        current_value = merchant_row.get('avg_txn_value', 0)
-        insights.append(f"""
-<div style='background-color: rgba(77, 171, 247, 0.1); padding: 1rem; border-radius: 5px; border-left: 4px solid #4dabf7;'>**Upselling Opportunity**  
-Current: ₹{current_value:.2f}  
-Target: ₹{target_value:.2f}  
-💡 Train staff on premium product features  
-Expected Impact: +₹{target_value - current_value:.2f} per transaction
-</div>
-""".replace('\n', '<br>'))
-    
-    # Quick win 2: Footfall boost
-    if merchant_row.get('daily_txn_count', 0) < 50:
-        current_count = merchant_row.get('daily_txn_count', 0)
-        target_count = int(current_count * 1.2)  # 20% increase
-        insights.append(f"""
-<div style='background-color: rgba(77, 171, 247, 0.1); padding: 1rem; border-radius: 5px; border-left: 4px solid #4dabf7;'>
-**Footfall Boost**  
-Current: {current_count} customers  
-Target: {target_count} customers  
-💡 Launch 2-week promotion with 10% discount  
-Expected Impact: +{target_count - current_count} customers daily
-</div>
-""")
-    
-    # Add cluster insights (blue background)
-    if cluster_peers is not None and not cluster_peers.empty:
-        insights.append("### 🔄 Cluster Insights")
-        insights.append("#### Top Performers in Your Cluster")
-        
-        top_performers = cluster_peers.nlargest(3, 'avg_txn_value')
-        if not top_performers.empty:
-            insights.append("""
-<div style='background-color: rgba(77, 171, 247, 0.1); padding: 1rem; border-radius: 5px; border-left: 4px solid #4dabf7;'>
-""")
-            for _, peer in top_performers.iterrows():
-                insights.append(f"""
-🏪 **{peer['store_type']}** in {peer['city']}  
-   Average Transaction: ₹{peer['avg_txn_value']:.2f}
-""")
-            insights.append("</div>")
-    
-    return "\n".join(insights)
+    prompt = f"""As a payment analytics expert, provide a concise, number-focused analysis for this merchant:
+
+**Key Metrics:**
+- Merchant ID: {merchant_row.get('merchant_id', 'N/A')}
+- Industry: {merchant_row.get('industry', 'N/A')}
+- Location: {merchant_row.get('city', 'N/A')}
+
+**Current Performance:**
+- Average Transaction Value: ₹{merchant_row.get('avg_txn_value', 'N/A'):.2f}
+- Daily Transactions: {merchant_row.get('daily_txn_count', 'N/A')}
+- Refund Rate: {merchant_row.get('refund_rate', 'N/A')*100:.1f}%
+
+**Local Comparison:**
+{format_quick_comparison(comparison_local, 'Local')}
+
+**Cluster Comparison:**
+{format_quick_comparison(comparison_cluster, 'Cluster')}
+
+**Request:**
+Provide a concise analysis with:
+1. Top 3 key metrics that need attention (with specific numbers)
+2. One immediate action item for each metric
+3. One key strength (with numbers)
+4. One quick win opportunity (with numbers)
+
+Format the response as:
+- Use emojis for visual appeal
+- Keep each point to one line
+- Include specific numbers in each point
+- Make it scannable and actionable
+- Focus on the most impactful metrics only"""
+
+    return call_gemini_api(prompt)
 
 def generate_advanced_ai_insights(merchant_row, comparison_local, comparison_cluster, cluster_peers, cluster_averages):
     """Generate detailed analysis when requested"""
@@ -302,19 +376,106 @@ def format_detailed_comparison(comparison_df, comp_type):
             formatted += f"  * Difference: {((row['Merchant Value'] - row[f'{comp_type} Avg']) / row[f'{comp_type} Avg'] * 100):.1f}%\n"
     return formatted
 
-def call_gemini_api(prompt, model_name="gemini-1.5-flash"):
-    """Calls the configured Google Generative AI model (Gemini)."""
-    if not _gemini_api_configured:
-        return "### AI Analysis Error:\nGoogle API Key not configured or configuration failed."
+def extract_percentage_from_insight(insight_text):
+    """Extracts the first percentage value from the AI insight text."""
+    if not insight_text:
+        return None
+    match = re.search(r'(\d+)%', insight_text)
+    if match:
+        return float(match.group(1)) / 100
+    return None
 
-    try:
-        model = genai.GenerativeModel(model_name)
-        response = model.generate_content(prompt)
+def parse_insights_for_impact(response):
+    """Parse AI response to extract impact percentages for each metric."""
+    insights_dict = {}
+    current_metric = None
+    
+    for line in response.split('\n'):
+        line = line.strip()
         
-        if response.parts:
-            return response.text
-        else:
-            return "### AI Analysis Error:\nNo response generated from the AI model."
+        if '💪 STRENGTH:' in line or '🎯 OPPORTUNITY:' in line:
+            if 'value' in line.lower():
+                current_metric = 'Avg Txn Value'
+            elif 'count' in line.lower():
+                current_metric = 'Daily Txn Count'
+            elif 'rate' in line.lower():
+                current_metric = 'Refund Rate'
+            elif 'level' in line.lower():
+                current_metric = 'Income Level'
+        
+        if '📈 IMPACT:' in line and current_metric:
+            match = re.search(r'(\d+)%', line)
+            if match:
+                # Store the full impact line
+                insights_dict[current_metric] = line.strip()
+    
+    return insights_dict
+
+
+def reformat_insights_multiline(insight_text):
+    """
+    Reformat single-line Gemini insights into multiline blocks with spacing.
+    """
+    lines = insight_text.split('\n')
+    formatted = []
+    block = []
+
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+
+        if any(emoji in line for emoji in ['💪', '🎯', '⚠️']):
+            if block:
+                formatted.append('\n'.join(block) + '\n')
+                block = []
+        block.append(line)
+
+    if block:
+        formatted.append('\n'.join(block) + '\n')
+
+    return '\n'.join(formatted)
+
+def format_insights_for_display(insights_text, impact_data=None):
+    """Format insights with proper spacing and line breaks for Streamlit display."""
+    # Split into individual insights
+    insights = insights_text.strip().split('\n\n')
+    formatted_insights = []
+    
+    for i, insight in enumerate(insights):
+        if not insight.strip():
+            continue
             
-    except Exception as e:
-        return f"### AI Analysis Error:\nAn error occurred: {str(e)}"
+        # Split the insight into lines
+        lines = insight.strip().split('\n')
+        if len(lines) >= 3:  # Ensure we have all three parts
+            # Get the metric from the insight
+            metric = None
+            insight_text = lines[0].lower()
+            
+            # More comprehensive metric detection with unique identifiers
+            if 'transaction value' in insight_text or 'avg' in insight_text or 'value' in insight_text:
+                metric = 'Avg Txn Value'
+            elif 'daily count' in insight_text:
+                metric = 'Daily Txn Count (Count)'
+            elif 'daily txns' in insight_text:
+                metric = 'Daily Txn Count (Txns)'
+            elif 'daily' in insight_text or 'count' in insight_text or 'transaction' in insight_text or 'customers' in insight_text:
+                metric = 'Daily Txn Count'
+            elif 'refund' in insight_text or 'rate' in insight_text:
+                metric = 'Refund Rate'
+            elif 'income' in insight_text or 'level' in insight_text:
+                metric = 'Income Level'
+            
+            # Only add to formatted insights if we found a metric
+            if metric:
+                formatted_insight = f"""
+                <div style='margin: 10px 0; padding: 15px; border-radius: 8px; border: 1px solid #4dabf7; background: transparent;'>
+                    <p style='margin: 5px 0; color: #e0e0e0;'>{lines[0]}</p>
+                    <p style='margin: 5px 0; color: #e0e0e0;'>{lines[1]}</p>
+                    <p style='margin: 5px 0; color: #e0e0e0;'>{lines[2]}</p>
+                </div>
+                """
+                formatted_insights.append((formatted_insight, metric, i))  # Add index for unique key
+    
+    return formatted_insights

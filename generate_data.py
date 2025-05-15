@@ -30,16 +30,7 @@ def generate_merchant_chunk(start_idx, n_merchants):
         store_type = random.choice(store_types)
         industry = random.choice(industries)
         income_level = abs(np.random.normal(50000, 15000))
-        rent_pct_revenue = np.random.uniform(0.05, 0.25)
         weather_preference = random.choice(['Rain Boost', 'Sunny Boost', 'None'])
-
-        # Store size based on type
-        if store_type == 'Mall':
-            store_size_sqft = np.random.randint(800, 5000)
-        elif store_type == 'Street Front':
-            store_size_sqft = np.random.randint(400, 2500)
-        else:  # Standalone
-            store_size_sqft = np.random.randint(1000, 8000)
 
         # Industry-specific metrics
         if industry == 'Retail':
@@ -62,12 +53,10 @@ def generate_merchant_chunk(start_idx, n_merchants):
             'store_type': store_type,
             'industry': industry,
             'income_level': round(income_level, 2),
-            'rent_pct_revenue': round(rent_pct_revenue, 4),
             'weather_preference': weather_preference,
             'avg_txn_value': round(avg_txn_value, 2),
             'daily_txn_count': daily_txn_count,
-            'refund_rate': round(refund_rate, 4),
-            'store_size_sqft': store_size_sqft
+            'refund_rate': round(refund_rate, 4)
         })
     return pd.DataFrame(merchants)
 
@@ -86,16 +75,12 @@ def generate_competitor_chunk(merchant_chunk, comp_counter):
             comp['daily_txn_count'] *= np.random.uniform(0.8, 1.2)
             comp['refund_rate'] *= np.random.uniform(0.8, 1.2)
             comp['income_level'] *= np.random.uniform(0.95, 1.05)
-            comp['rent_pct_revenue'] *= np.random.uniform(0.9, 1.1)
-            comp['store_size_sqft'] *= np.random.uniform(0.85, 1.15)
 
             # Ensure non-negative values and round
             comp['avg_txn_value'] = round(max(0, comp['avg_txn_value']), 2)
             comp['daily_txn_count'] = max(0, int(comp['daily_txn_count']))
             comp['refund_rate'] = round(max(0, min(1, comp['refund_rate'])), 4)
             comp['income_level'] = round(max(0, comp['income_level']), 2)
-            comp['rent_pct_revenue'] = round(max(0, comp['rent_pct_revenue']), 4)
-            comp['store_size_sqft'] = max(100, int(comp['store_size_sqft']))
 
             competitors.append(comp)
     return pd.DataFrame(competitors), comp_counter
