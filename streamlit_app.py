@@ -591,36 +591,42 @@ with st.sidebar:
         st.markdown("""
         ### How We Analyze Your Business
 
-        We use advanced machine learning clustering to understand your business performance:
+        We provide **two types of comparisons** to give you complete market insights:
 
-        #### Industry-Based Clustering 🔄
-        - Groups businesses in the **same industry** with similar performance patterns
-        - Analyzes operational similarities within your industry
-        - Compares against businesses with:
-            - Similar transaction patterns
-            - Comparable customer behavior
-            - Similar operational efficiency
-            - Comparable business scale
-        - **Industry-specific insights**: Retail vs Restaurant vs Fashion
+        #### 1. Local Market Analysis 📍
+        - Compares you with businesses in **your exact area** (same pincode)
+        - **Same industry** (Restaurant vs Restaurant, Retail vs Retail)
+        - Shows how you perform against **geographic neighbors**
+        - Helps understand **local market dynamics**
+        - **Example**: Your restaurant vs other restaurants in the same pincode
 
-        #### Why Industry-Specific Clustering Matters
-        - More relevant comparisons (restaurants vs restaurants, not vs fashion stores)
-        - Industry-specific best practices and benchmarks
-        - Actionable insights tailored to your business type
-        - Learn from successful peers in your industry
-        - Understand industry-wide trends and opportunities
+        #### 2. Industry Cluster Analysis 🔄
+        - Uses **machine learning clustering** within your industry
+        - Groups businesses with **similar performance patterns** across India
+        - Compares against businesses that operate **similarly to you**
+        - **Location-independent**: Finds similar performers anywhere
+        - **Performance-based**: Groups by transaction patterns, customer behavior, efficiency
 
-        #### Example Clusters
-        - **Restaurant Cluster A**: High-volume, quick service restaurants
-        - **Restaurant Cluster B**: Premium dining, higher ticket size restaurants
-        - **Retail Cluster A**: High footfall, convenience stores
-        - **Fashion Cluster A**: Boutique stores, premium pricing
+        #### Why Both Matter
+        - **Local Market**: Shows your position in your immediate market
+            - "Am I competitive in my neighborhood?"
+            - Local pricing, local customer expectations
+            - Direct geographic competition
+        
+        - **Industry Cluster**: Shows your potential and best practices
+            - "What can I achieve with businesses like mine?"
+            - Learn from similar performers across India
+            - Industry-specific growth strategies
+
+        #### Example Comparison
+        - **Local**: Your café vs 3 other cafés in Bandra (400050)
+        - **Cluster**: Your café vs 47 similar-performing cafés across Mumbai, Delhi, Bangalore with comparable customer patterns
 
         #### Analysis Benefits
-        - Compare against truly similar businesses
-        - Get industry-specific actionable recommendations
-        - Understand your competitive position within your industry
-        - Access best practices from top performers in your sector
+        - **Immediate**: Fix local competitive issues
+        - **Strategic**: Learn from industry best practices
+        - **Actionable**: Get location-specific + performance-based insights
+        - **Comprehensive**: Complete market view (local + industry-wide)
         """)
     
     # Add business tools guide
@@ -710,16 +716,26 @@ if merchant_id:
                 # Only generate insights if they don't exist in session state
                 if st.session_state.crisp_insights is None:
                     with st.spinner("Generating insights..."):
-                        st.session_state.crisp_insights, st.session_state.impact_data = generate_crisp_insights(
-                            merchant_row,
-                            comparison_df_local,
-                            comparison_df_cluster,
-                            cluster_peers,
-                            cluster_averages
-                        )
+                        try:
+                            print(f"DEBUG: Starting insight generation for merchant {merchant_id}")
+                            st.session_state.crisp_insights, st.session_state.impact_data = generate_crisp_insights(
+                                merchant_row,
+                                comparison_df_local,
+                                comparison_df_cluster,
+                                cluster_peers,
+                                cluster_averages
+                            )
+                            print(f"DEBUG: Insight generation completed successfully")
+                            print(f"DEBUG: Impact data received: {st.session_state.impact_data}")
+                        except Exception as e:
+                            print(f"DEBUG: Exception during insight generation: {e}")
+                            print(f"DEBUG: Exception traceback: {traceback.format_exc()}")
+                            st.error(f"Error generating insights: {e}")
+                            st.session_state.crisp_insights = "Error generating insights"
+                            st.session_state.impact_data = None
                 
                 # Format insights for display
-                formatted_insights = format_insights_for_display(st.session_state.crisp_insights)
+                formatted_insights = format_insights_for_display(st.session_state.crisp_insights, st.session_state.impact_data)
                 
                 # Display each insight with its corresponding graph
                 for i, (insight_html, metric, insight_index) in enumerate(formatted_insights):
@@ -870,20 +886,20 @@ if merchant_id:
             col1, col2 = st.columns(2)
             
             with col1:
-                st.markdown("### Similar Business Comparison")
+                st.markdown("### Local Market (Same Area)")
                 if comparison_df_local is not None:
                     for _, row in comparison_df_local.iterrows():
                         status_class = "status-good" if "✅" in str(row['Performance']) else "status-warning" if "⚠️" in str(row['Performance']) else "status-bad"
                         
-                        # Display performance section - using cluster data
-                        impact_pct = ((row['Merchant Raw'] - row['Cluster Raw']) / row['Cluster Raw'] * 100) if row['Cluster Raw'] != 0 else 0
+                        # Display performance section - using local data
+                        impact_pct = ((row['Merchant Raw'] - row['Local Raw']) / row['Local Raw'] * 100) if row['Local Raw'] != 0 else 0
                         st.markdown(f"""
                         <div class="performance-section">
                             <div class="performance-title">{row['Metric']}</div>
                             <div class="performance-metrics">
                                 <div class="performance-metric">
                                     <p>Your Value: <span class="performance-value">{row['Merchant Value']}</span></p>
-                                    <p>Similar Business Average: <span class="performance-average">{row['Cluster Avg']}</span></p>
+                                    <p>Local Area Average: <span class="performance-average">{row['Local Avg']}</span></p>
                                 </div>
                                 <div class="performance-metric">
                                     <p class="performance-status {status_class}">{row['Performance']}</p>
@@ -891,7 +907,7 @@ if merchant_id:
                             </div>
                             <div class="performance-details">
                                 <div class="performance-detail-item">
-                                    <span class="performance-detail-value">Impact:</span> {impact_pct:.1f}% vs similar businesses
+                                    <span class="performance-detail-value">Impact:</span> {impact_pct:.1f}% vs local market
                                 </div>
                             </div>
                         </div>
@@ -901,7 +917,7 @@ if merchant_id:
                         insights = get_performance_insights(
                             row['Metric'], 
                             row['Merchant Raw'], 
-                            row['Cluster Raw'], 
+                            row['Local Raw'], 
                             row['Performance'],
                             merchant_row.get('industry', ''),
                             merchant_row.get('store_type', '')
@@ -919,9 +935,11 @@ if merchant_id:
                                 st.markdown(f"<div style='color: #e0e0e0; font-size: 0.85em; margin: 2px 0;'>{insight_item}</div>", unsafe_allow_html=True)
                             
                             st.markdown("</div></div>", unsafe_allow_html=True)
+                else:
+                    st.info("No local competitors found in your area with the same business type.")
 
             with col2:
-                st.markdown("### Industry Cluster Analysis")
+                st.markdown("### Industry Cluster (Similar Performance)")
                 if comparison_df_cluster is not None:
                     for _, row in comparison_df_cluster.iterrows():
                         status_class = "status-good" if "✅" in str(row['Performance']) else "status-warning" if "⚠️" in str(row['Performance']) else "status-bad"
@@ -970,6 +988,8 @@ if merchant_id:
                                 st.markdown(f"<div style='color: #e0e0e0; font-size: 0.85em; margin: 2px 0;'>{insight_item}</div>", unsafe_allow_html=True)
                             
                             st.markdown("</div></div>", unsafe_allow_html=True)
+                else:
+                    st.info("No similar performing businesses found in your industry cluster.")
 
         with tab3:
             # Detailed Information
@@ -1003,17 +1023,17 @@ if merchant_id:
         
         if comparison_df_local is not None:
             col_dl1.download_button(
-                "📊 Business Comparison",
+                "📍 Local Market Report",
                 comparison_df_local.to_csv(index=False).encode('utf-8'),
-                f"{merchant_id}_business_comparison.csv",
+                f"{merchant_id}_local_market_comparison.csv",
                 "text/csv"
             )
         
         if comparison_df_cluster is not None:
             col_dl2.download_button(
-                "📈 Industry Analysis",
+                "🔄 Industry Cluster Report",
                 comparison_df_cluster.to_csv(index=False).encode('utf-8'),
-                f"{merchant_id}_industry_analysis.csv",
+                f"{merchant_id}_industry_cluster_analysis.csv",
                 "text/csv"
             )
         

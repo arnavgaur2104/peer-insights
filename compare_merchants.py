@@ -145,45 +145,60 @@ def get_comparison_data(merchant_id, merchants_df):
     Performs industry-specific clustering and generates comparison dataframes.
     Returns:
         - merchant_row (dict): Profile of the selected merchant.
-        - comparison_df (pd.DataFrame): Comparison vs cluster avg (no local competitors).
-        - cluster_comparison_df (pd.DataFrame): Comparison vs cluster avg.
-        - local_competitors (pd.DataFrame): Empty DataFrame (removed).
-        - cluster_peers (pd.DataFrame): DataFrame of merchants in the same cluster and industry.
+        - comparison_df_local (pd.DataFrame): Comparison vs local competitors (same pincode + industry).
+        - comparison_df_cluster (pd.DataFrame): Comparison vs cluster avg (ML clustering within industry).
+        - local_competitors (pd.DataFrame): Merchants in same pincode + industry.
+        - cluster_peers (pd.DataFrame): Merchants in the same ML cluster.
         - cluster_averages (pd.Series): Average metrics for the merchant's cluster.
     """
-    # --- 1. Cluster merchants by industry ---
-    merchants_clustered_df, kmeans_models, preprocessors = cluster_merchants(merchants_df.copy())
-    if kmeans_models is None or not kmeans_models: # Handle clustering failure
-         print("Clustering failed, cannot provide cluster comparison.")
-         merchants_clustered_df['cluster'] = -1 # Ensure column exists
-
-
-    # --- 2. Get Selected Merchant's Profile & Cluster ---
-    merchant_row = get_merchant_profile(merchant_id, merchants_clustered_df)
+    # --- 1. Get Selected Merchant's Profile ---
+    merchant_row = get_merchant_profile(merchant_id, merchants_df)
     if merchant_row is None:
         return None, None, None, None, None, None
     
-    merchant_cluster = merchant_row.get('cluster', -1) # Get cluster, default to -1 if missing
+    merchant_pincode = merchant_row.get('pincode', None)
     merchant_industry = merchant_row.get('industry', None)
 
+    # --- 2. Find Local Competitors (same pincode + same industry) ---
+    local_competitors = pd.DataFrame()
+    local_averages = None
+    
+    if merchant_pincode is not None and merchant_industry is not None:
+        local_competitors = merchants_df[
+            (merchants_df['pincode'] == merchant_pincode) &
+            (merchants_df['industry'] == merchant_industry) &
+            (merchants_df['merchant_id'] != merchant_id)  # Exclude self
+        ].copy()
+        
+        if not local_competitors.empty:
+            local_averages = local_competitors[NUMERIC_METRICS].mean()
+            print(f"Found {len(local_competitors)} local competitors in {merchant_industry} industry, pincode {merchant_pincode}")
+        else:
+            print(f"No local competitors found for {merchant_industry} industry in pincode {merchant_pincode}")
 
-    # --- 3. Local Competitors - REMOVED (no competitor data) ---
-    local_competitors = pd.DataFrame()  # Always empty
+    # --- 3. Cluster merchants by industry for ML-based clustering ---
+    merchants_clustered_df, kmeans_models, preprocessors = cluster_merchants(merchants_df.copy())
+    if kmeans_models is None or not kmeans_models:
+        print("Clustering failed, cannot provide cluster comparison.")
+        merchants_clustered_df['cluster'] = -1
 
+    # --- 4. Update merchant row with cluster info ---
+    merchant_row_clustered = get_merchant_profile(merchant_id, merchants_clustered_df)
+    if merchant_row_clustered:
+        merchant_cluster = merchant_row_clustered.get('cluster', -1)
+        merchant_row['cluster'] = merchant_cluster  # Add cluster info to merchant_row
+    else:
+        merchant_cluster = -1
 
-    # --- 4. Local Competitor Averages - REMOVED ---
-    local_comp_avg = None  # No local competitor data
-
-
-    # --- 5. Find Cluster Peers & Calculate Cluster Averages (same industry and cluster) ---
+    # --- 5. Find Cluster Peers & Calculate Cluster Averages (same industry + same ML cluster) ---
     cluster_peers = pd.DataFrame()
     cluster_averages = None
-    if merchant_cluster != -1 and merchant_industry is not None: # Check if clustering was successful
-        # Find peers in the same cluster (which are automatically in the same industry)
+    
+    if merchant_cluster != -1 and merchant_industry is not None:
         cluster_peers = merchants_clustered_df[
             (merchants_clustered_df['cluster'] == merchant_cluster) &
-            (merchants_clustered_df['industry'] == merchant_industry) &  # Extra safety check
-            (merchants_clustered_df['merchant_id'] != merchant_id) # Exclude self
+            (merchants_clustered_df['industry'] == merchant_industry) &
+            (merchants_clustered_df['merchant_id'] != merchant_id)  # Exclude self
         ].copy()
         
         if not cluster_peers.empty:
@@ -192,71 +207,67 @@ def get_comparison_data(merchant_id, merchants_df):
         else:
             print(f"No cluster peers found for {merchant_industry} industry, cluster {merchant_cluster}")
 
-
-    # --- 6. Build Comparison DataFrames (only cluster-based) ---
+    # --- 6. Build Comparison DataFrames ---
     comparison_dfs = {'local': None, 'cluster': None}
 
-    # Only create cluster comparison (remove local competitor comparison)
-    for comp_type, avg_metrics_series in [('cluster', cluster_averages)]:
+    # Create both local and cluster comparisons
+    for comp_type, avg_metrics_series in [('local', local_averages), ('cluster', cluster_averages)]:
         if avg_metrics_series is None:
-            continue # Skip if no peers or averages couldn't be calculated
+            print(f"Skipping {comp_type} comparison - no data available")
+            continue
 
         comparison = {
             'Metric': [], 'Merchant Value': [], f'{comp_type.capitalize()} Avg': [], 'Performance': [],
-            'Merchant Raw': [], f'{comp_type.capitalize()} Raw': []  # Add raw values for calculations
+            'Merchant Raw': [], f'{comp_type.capitalize()} Raw': []
         }
+        
         for metric in NUMERIC_METRICS:
-             if metric not in merchant_row or pd.isna(merchant_row[metric]):
-                  continue # Skip if merchant doesn't have this metric
+            if metric not in merchant_row or pd.isna(merchant_row[metric]):
+                continue
 
-             merchant_value = merchant_row[metric]
-             competitor_value = avg_metrics_series.get(metric, np.nan) # Use .get for safety
+            merchant_value = merchant_row[metric]
+            competitor_value = avg_metrics_series.get(metric, np.nan)
 
-             if pd.isna(competitor_value):
-                  performance = 'N/A' # Cannot compare
-             # Define which metrics are 'higher is better' vs 'lower is better'
-             elif metric in ['avg_txn_value', 'daily_txn_count', 'repeat_customer_rate', 'income_level']:
-                 performance = '✅ Above Avg' if merchant_value >= competitor_value else '❌ Below Avg'
-             elif metric in ['refund_rate']:
-                 performance = '✅ Below Avg' if merchant_value <= competitor_value else '❌ Above Avg'
-             else:
-                 performance = 'N/A' # Metric type not defined for comparison
+            if pd.isna(competitor_value):
+                performance = 'N/A'
+            elif metric in ['avg_txn_value', 'daily_txn_count', 'repeat_customer_rate', 'income_level']:
+                performance = '✅ Above Avg' if merchant_value >= competitor_value else '❌ Below Avg'
+            elif metric in ['refund_rate']:
+                performance = '✅ Below Avg' if merchant_value <= competitor_value else '❌ Above Avg'
+            else:
+                performance = 'N/A'
 
-             comparison['Metric'].append(metric.replace('_', ' ').title())
-             
-             # Store raw values for calculations
-             comparison['Merchant Raw'].append(merchant_value)
-             comparison[f'{comp_type.capitalize()} Raw'].append(competitor_value if not pd.isna(competitor_value) else 0)
-             
-             # Format display values based on metric type
-             if metric in ['repeat_customer_rate', 'refund_rate']:
-                 # Display as percentage
-                 display_merchant_value = f"{merchant_value*100:.1f}%"
-                 display_competitor_value = f"{competitor_value*100:.1f}%" if not pd.isna(competitor_value) else 'N/A'
-             elif metric == 'avg_txn_value':
-                 # Display as currency
-                 display_merchant_value = f"₹{merchant_value:.2f}"
-                 display_competitor_value = f"₹{competitor_value:.2f}" if not pd.isna(competitor_value) else 'N/A'
-             elif metric == 'income_level':
-                 # Display as currency
-                 display_merchant_value = f"₹{merchant_value:.2f}"
-                 display_competitor_value = f"₹{competitor_value:.2f}" if not pd.isna(competitor_value) else 'N/A'
-             else:
-                 # Display as number
-                 display_merchant_value = round(merchant_value, 2)
-                 display_competitor_value = round(competitor_value, 2) if not pd.isna(competitor_value) else 'N/A'
-             
-             comparison['Merchant Value'].append(display_merchant_value)
-             comparison[f'{comp_type.capitalize()} Avg'].append(display_competitor_value)
-             comparison['Performance'].append(performance)
+            comparison['Metric'].append(metric.replace('_', ' ').title())
+            
+            # Store raw values for calculations
+            comparison['Merchant Raw'].append(merchant_value)
+            comparison[f'{comp_type.capitalize()} Raw'].append(competitor_value if not pd.isna(competitor_value) else 0)
+            
+            # Format display values based on metric type
+            if metric in ['repeat_customer_rate', 'refund_rate']:
+                display_merchant_value = f"{merchant_value*100:.1f}%"
+                display_competitor_value = f"{competitor_value*100:.1f}%" if not pd.isna(competitor_value) else 'N/A'
+            elif metric == 'avg_txn_value':
+                display_merchant_value = f"₹{merchant_value:.2f}"
+                display_competitor_value = f"₹{competitor_value:.2f}" if not pd.isna(competitor_value) else 'N/A'
+            elif metric == 'income_level':
+                display_merchant_value = f"₹{merchant_value:.2f}"
+                display_competitor_value = f"₹{competitor_value:.2f}" if not pd.isna(competitor_value) else 'N/A'
+            else:
+                display_merchant_value = round(merchant_value, 2)
+                display_competitor_value = round(competitor_value, 2) if not pd.isna(competitor_value) else 'N/A'
+            
+            comparison['Merchant Value'].append(display_merchant_value)
+            comparison[f'{comp_type.capitalize()} Avg'].append(display_competitor_value)
+            comparison['Performance'].append(performance)
 
         comparison_dfs[comp_type] = pd.DataFrame(comparison)
 
     return (
         merchant_row,
-        comparison_dfs['cluster'],  # Return cluster comparison as main comparison
-        comparison_dfs['cluster'],  # Same data for both returns  
-        local_competitors,  # Empty DataFrame
-        cluster_peers,
-        cluster_averages # Pass cluster averages for potential use in insights
+        comparison_dfs['local'],    # Local comparison (same pincode + industry)
+        comparison_dfs['cluster'],  # Cluster comparison (ML clustering within industry)
+        local_competitors,          # Local competitors DataFrame
+        cluster_peers,              # Cluster peers DataFrame
+        cluster_averages           # Cluster averages
     )

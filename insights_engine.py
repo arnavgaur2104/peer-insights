@@ -71,13 +71,25 @@ def format_metric_comparison(metric, merchant_value, avg_value, pct_diff, is_bet
 
 def generate_impact_visualization(merchant_row, comparison_local, comparison_cluster, response=None):
     """Generate data for impact visualization."""
-    if comparison_local is None:
+    print(f"\n\n=== IMPACT VISUALIZATION DEBUG START ===")
+    print(f"DEBUG: generate_impact_visualization called")
+    print(f"DEBUG: response=\n{response}")
+    print(f"DEBUG: response type: {type(response)}")
+    print(f"DEBUG: comparison_cluster is None: {comparison_cluster is None}")
+    print(f"=== IMPACT VISUALIZATION DEBUG START ===\n")
+    
+    if comparison_cluster is None:
+        print(f"DEBUG: comparison_cluster is None, returning None")
         return None
 
     impact_data = []
     
     # Split insights into individual blocks using the same logic as format_insights_for_display
     raw_insights = response.strip().split('\n\n')
+    print(f"DEBUG: Found {len(raw_insights)} raw insights after splitting")
+    
+    for i, raw_insight in enumerate(raw_insights):
+        print(f"DEBUG: Raw insight {i}: '{raw_insight}'")
     
     # Filter insights the same way as format_insights_for_display
     cleaned_insights = []
@@ -90,10 +102,16 @@ def generate_impact_visualization(merchant_row, comparison_local, comparison_clu
         if len(insight.split('\n')) >= 2:  # Only include multi-line insights
             cleaned_insights.append(insight)
     
+    print(f"DEBUG: After filtering, {len(cleaned_insights)} cleaned insights")
+    for i, insight in enumerate(cleaned_insights):
+        print(f"DEBUG: Cleaned insight {i}: '{insight}'")
+    
     # Process each cleaned insight
     for insight_index, insight_block in enumerate(cleaned_insights):
+        print(f"DEBUG: Processing insight {insight_index}")
         lines = insight_block.strip().split('\n')
         if len(lines) < 2:  # Need at least 2 lines
+            print(f"DEBUG: Skipping insight {insight_index} - not enough lines")
             continue
             
         # Extract metric and impact percentage
@@ -102,39 +120,64 @@ def generate_impact_visualization(merchant_row, comparison_local, comparison_clu
         
         # Detect which metric this insight is about
         insight_text = insight_block.lower()
-        if '💪' in insight_block and 'avg' in insight_text:
+        print(f"DEBUG: Full insight_text for metric detection: '{insight_text}'")
+        
+        if 'avg' in insight_text and ('transaction' in insight_text or 'txn' in insight_text):
             metric = 'Avg Txn Value'
-        elif ('🎯' in insight_block or '💡' in insight_block) and 'daily' in insight_text:
+            print(f"DEBUG: Matched Avg Txn Value - found 'avg' and 'transaction/txn'")
+        elif 'daily' in insight_text and ('count' in insight_text or 'txn' in insight_text or 'transaction' in insight_text):
             metric = 'Daily Txn Count'
-        elif ('🎯' in insight_block or '💡' in insight_block) and 'repeat' in insight_text:
+            print(f"DEBUG: Matched Daily Txn Count - found 'daily' and 'count/txn/transaction'")
+        elif 'repeat' in insight_text and ('customer' in insight_text or 'rate' in insight_text):
             metric = 'Repeat Customer Rate'
-        elif ('⚠️' in insight_block) and 'refund' in insight_text:
+            print(f"DEBUG: Matched Repeat Customer Rate - found 'repeat' and 'customer/rate'")
+        elif 'refund' in insight_text and 'rate' in insight_text:
             metric = 'Refund Rate'
+            print(f"DEBUG: Matched Refund Rate - found 'refund' and 'rate'")
+        else:
+            print(f"DEBUG: No metric match found")
+            print(f"DEBUG: Contains 'avg': {'avg' in insight_text}")
+            print(f"DEBUG: Contains 'transaction': {'transaction' in insight_text}")
+            print(f"DEBUG: Contains 'txn': {'txn' in insight_text}")
+            print(f"DEBUG: Contains 'daily': {'daily' in insight_text}")
+            print(f"DEBUG: Contains 'count': {'count' in insight_text}")
+            print(f"DEBUG: Contains 'repeat': {'repeat' in insight_text}")
+            print(f"DEBUG: Contains 'customer': {'customer' in insight_text}")
+            print(f"DEBUG: Contains 'rate': {'rate' in insight_text}")
+        
+        print(f"DEBUG: Detected metric for insight {insight_index}: {metric}")
         
         if not metric:
+            print(f"DEBUG: No metric detected for insight {insight_index}")
             continue
         
         # Extract impact percentage from any line that contains 'IMPACT:'
         for line in lines:
             if '📈 IMPACT:' in line:
+                print(f"DEBUG: Found impact line: {line}")
                 # Extract percentage using regex
                 import re
                 percentage_match = re.search(r'(\d+(?:\.\d+)?)%', line)
                 if percentage_match:
                     impact_pct = float(percentage_match.group(1)) / 100.0
+                    print(f"DEBUG: Extracted impact percentage: {impact_pct}")
                 break
         
         if impact_pct is None:
+            print(f"DEBUG: No impact percentage found for insight {insight_index}")
             continue
         
         # Find corresponding metric in cluster comparison data
         metric_row = comparison_cluster[comparison_cluster['Metric'] == metric]
         if metric_row.empty:
+            print(f"DEBUG: No metric row found for {metric} in comparison_cluster")
             continue
         
         metric_data = metric_row.iloc[0]
         current_value = metric_data['Merchant Raw']
         cluster_avg = metric_data['Cluster Raw']
+        
+        print(f"DEBUG: Found metric data - current: {current_value}, cluster_avg: {cluster_avg}")
         
         # Calculate expected value after improvement
         if metric == 'Refund Rate':
@@ -144,6 +187,8 @@ def generate_impact_visualization(merchant_row, comparison_local, comparison_clu
             # For other metrics, improvement means increase
             expected_value = current_value * (1 + impact_pct)
         
+        print(f"DEBUG: Calculated expected value: {expected_value}")
+        
         impact_data.append({
             'metric': metric,
             'insight_index': insight_index,
@@ -152,7 +197,10 @@ def generate_impact_visualization(merchant_row, comparison_local, comparison_clu
             'cluster_avg': cluster_avg,
             'impact_pct': impact_pct
         })
+        
+        print(f"DEBUG: Added impact data for {metric}")
     
+    print(f"DEBUG: Final impact_data has {len(impact_data)} items")
     return impact_data
 
 def generate_crisp_insights(merchant_row, comparison_local, comparison_cluster, cluster_peers, cluster_averages):
@@ -282,21 +330,31 @@ Make it super concise and actionable and personalized for each merchant's demogr
 
     try:
         # Call Gemini API
+        print(f"DEBUG: About to call Gemini API")
         raw_response = call_gemini_api(prompt)
+        print(f"DEBUG: Got raw_response from Gemini")
         response = reformat_insights_multiline(raw_response)
+        print(f"DEBUG: Reformatted response")
         
         # Generate impact visualization data using cluster comparison
-        impact_data = generate_impact_visualization(merchant_row, comparison_data, comparison_cluster, response)
+        print(f"DEBUG: About to call generate_impact_visualization")
+        print(f"DEBUG: comparison_cluster is None: {comparison_cluster is None}")
+        impact_data = generate_impact_visualization(merchant_row, comparison_local, comparison_cluster, response)
+        print(f"DEBUG: generate_impact_visualization returned: {impact_data}")
         
         # Enhance insights with actionable links AFTER generating impact data
+        print(f"DEBUG: About to enhance insights with links")
         enhanced_response = enhance_insights_with_links(
             response, 
             merchant_row.get('industry', ''), 
             merchant_row.get('store_type', '')
         )
+        print(f"DEBUG: Enhanced insights completed")
         
         return enhanced_response, impact_data
     except Exception as e:
+        print(f"DEBUG: Exception in generate_crisp_insights: {e}")
+        print(f"DEBUG: Exception traceback: {traceback.format_exc()}")
         return f"Error generating insights: {str(e)}", None
 
 def format_impact_visualization(impact_data):
@@ -539,14 +597,26 @@ def format_insights_for_display(insights_text, impact_data=None):
         
         # Extract metric and insight index for impact data matching
         metric = None
-        if '💪' in insight and 'avg' in insight.lower():
+        insight_lower = insight.lower()
+        print(f"DEBUG: format_insights_for_display - Processing insight {insight_index}: '{insight[:50]}...'")
+        print(f"DEBUG: insight_lower for metric detection: '{insight_lower[:100]}...'")
+        
+        if 'avg' in insight_lower and ('transaction' in insight_lower or 'txn' in insight_lower):
             metric = 'Avg Txn Value'
-        elif ('🎯' in insight or '💡' in insight) and 'daily' in insight.lower():
+            print(f"DEBUG: Matched Avg Txn Value")
+        elif 'daily' in insight_lower and ('transaction' in insight_lower or 'txn' in insight_lower or 'count' in insight_lower):
             metric = 'Daily Txn Count'
-        elif ('🎯' in insight or '💡' in insight) and 'repeat' in insight.lower():
+            print(f"DEBUG: Matched Daily Txn Count")
+        elif 'repeat' in insight_lower and ('customer' in insight_lower or 'rate' in insight_lower):
             metric = 'Repeat Customer Rate'
-        elif ('⚠️' in insight) and 'refund' in insight.lower():
+            print(f"DEBUG: Matched Repeat Customer Rate")
+        elif 'refund' in insight_lower and 'rate' in insight_lower:
             metric = 'Refund Rate'
+            print(f"DEBUG: Matched Refund Rate")
+        else:
+            print(f"DEBUG: No metric matched for insight")
+            
+        print(f"DEBUG: Final metric for insight {insight_index}: {metric}")
         
         formatted_insights.append((formatted_insight, metric, insight_index))
     
@@ -601,13 +671,17 @@ def get_actionable_links(action_text, industry, store_type):
     Map specific action items to directly relevant business links.
     Returns enhanced action text with embedded links that directly support the suggested action.
     """
+    print(f"DEBUG: get_actionable_links called with action_text='{action_text}', industry={industry}, store_type={store_type}")
+    
     action_lower = action_text.lower()
+    print(f"DEBUG: action_lower='{action_lower}'")
     
     # Direct action-to-solution mapping
     action_links = {}
     
     # COMBO MEALS & BUNDLING ACTIONS
     if any(phrase in action_lower for phrase in ['combo', 'bundle', 'package', 'meal', 'deal', 'offer']):
+        print(f"DEBUG: Matched combo/bundling action")
         if industry == 'Restaurant':
             action_links['Menu Design Tools'] = {
                 'url': 'https://www.canva.com/create/menus/',
@@ -621,9 +695,59 @@ def get_actionable_links(action_text, industry, store_type):
                 'url': 'https://www.petpooja.com/',
                 'benefit': 'Auto-suggest combos at checkout - staff can upsell 40% more effectively'
             }
+        elif industry == 'Retail':
+            action_links['Product Bundling Guide'] = {
+                'url': 'https://blog.shopify.com/product-bundling',
+                'benefit': 'Learn to create "Buy 2 Get 1 Free" deals that increase basket size by 35%'
+            }
+            action_links['POS Bundle Setup'] = {
+                'url': 'https://razorpay.com/pos/',
+                'benefit': 'Set up automatic bundle pricing - "3 soaps for ₹150" instead of individual pricing'
+            }
+            action_links['Inventory Management'] = {
+                'url': 'https://www.zoho.com/inventory/',
+                'benefit': 'Track which product combinations sell best to optimize your deals'
+            }
+        elif industry == 'Fashion':
+            action_links['Outfit Styling'] = {
+                'url': 'https://www.canva.com/create/fashion-lookbooks/',
+                'benefit': 'Create "Complete Look" displays - shirt + pants + accessories for 40% higher sales'
+            }
+            action_links['Fashion Bundles'] = {
+                'url': 'https://www.shopify.com/blog/fashion-ecommerce',
+                'benefit': 'Learn to bundle "Formal Office Wear" or "Weekend Casual" sets effectively'
+            }
+    
+    # PROMOTION & DISCOUNT ACTIONS (including happy hour)
+    if any(phrase in action_lower for phrase in ['happy hour', 'discount', 'sale', 'promotion', 'special', 'offer']):
+        print(f"DEBUG: Matched promotion action")
+        if industry == 'Restaurant':
+            action_links['Happy Hour Setup'] = {
+                'url': 'https://pos.toasttab.com/blog/restaurant-happy-hour',
+                'benefit': 'Design happy hour menus that bring 50% more customers during slow hours'
+            }
+            action_links['Social Media Promotion'] = {
+                'url': 'https://business.facebook.com/',
+                'benefit': 'Post "Happy Hour 4-7 PM: 30% off appetizers!" to bring immediate crowds'
+            }
+        elif industry == 'Retail':
+            action_links['Flash Sale Tools'] = {
+                'url': 'https://www.shopify.com/blog/flash-sales',
+                'benefit': 'Run "2-hour flash sales" that create urgency and boost daily sales by 60%'
+            }
+            action_links['WhatsApp Promotions'] = {
+                'url': 'https://business.whatsapp.com/',
+                'benefit': 'Send "Today only: 20% off cleaning supplies!" to your customer list'
+            }
+        elif industry == 'Fashion':
+            action_links['Fashion Sales Strategy'] = {
+                'url': 'https://www.shopify.com/retail/fashion-retail-strategies',
+                'benefit': 'Learn to run "End of Season" sales that clear inventory while maintaining margins'
+            }
     
     # LOYALTY PROGRAM ACTIONS
     if any(phrase in action_lower for phrase in ['loyalty', 'repeat', 'retention', 'customer', 'return']):
+        print(f"DEBUG: Matched loyalty action")
         if industry == 'Restaurant':
             action_links['WhatsApp Business'] = {
                 'url': 'https://business.whatsapp.com/',
@@ -670,6 +794,7 @@ def get_actionable_links(action_text, industry, store_type):
     
     # DELIVERY & ONLINE ACTIONS
     if any(phrase in action_lower for phrase in ['delivery', 'online', 'zomato', 'swiggy', 'digital']):
+        print(f"DEBUG: Matched delivery action")
         if industry == 'Restaurant':
             action_links['Zomato Partner'] = {
                 'url': 'https://www.zomato.com/business',
@@ -686,6 +811,7 @@ def get_actionable_links(action_text, industry, store_type):
     
     # MARKETING & PROMOTION ACTIONS
     if any(phrase in action_lower for phrase in ['marketing', 'promotion', 'advertise', 'social', 'google']):
+        print(f"DEBUG: Matched marketing action")
         action_links['Google My Business'] = {
             'url': 'https://business.google.com/',
             'benefit': 'Free Google listing brings 40% more walk-ins - customers search "restaurants near me" and find you first'
@@ -701,6 +827,7 @@ def get_actionable_links(action_text, industry, store_type):
     
     # STAFF & TRAINING ACTIONS
     if any(phrase in action_lower for phrase in ['staff', 'training', 'service', 'upsell']):
+        print(f"DEBUG: Matched staff training action")
         action_links['Staff Training Videos'] = {
             'url': 'https://www.youtube.com/playlist?list=PLrAXtmRdnEQdvF9OGAXZSGsN_bG6Mk8PD',
             'benefit': 'Trained staff suggest "Would you like fries with that?" - increases average order value by 15-20%'
@@ -710,8 +837,11 @@ def get_actionable_links(action_text, industry, store_type):
             'benefit': 'Learn 5 phrases that double dessert sales - "Save room for our signature chocolate cake!"'
         }
     
+    print(f"DEBUG: Found {len(action_links)} action links: {list(action_links.keys())}")
+    
     # If no links found, return original text
     if not action_links:
+        print(f"DEBUG: No links found, returning original text")
         return action_text
     
     # Create enhanced action text with embedded links as proper HTML list
@@ -722,26 +852,34 @@ def get_actionable_links(action_text, industry, store_type):
     
     enhanced_text += "</ul>"
     
+    print(f"DEBUG: Enhanced text created: {enhanced_text}")
     return enhanced_text
 
 def enhance_insights_with_links(insights_text, industry, store_type):
     """
     Process the insights text to add actionable links to action items.
     """
+    print(f"DEBUG: enhance_insights_with_links called with industry={industry}, store_type={store_type}")
+    print(f"DEBUG: insights_text=\n{insights_text}")
+    
     lines = insights_text.split('\n')
     enhanced_lines = []
     
     for line in lines:
         if line.strip().startswith('💡 ACTION:'):
+            print(f"DEBUG: Found action line: {line}")
             # Extract the action text
             action_text = line.strip()
             # Get enhanced version with links
             enhanced_action = get_actionable_links(action_text, industry, store_type)
+            print(f"DEBUG: Enhanced action: {enhanced_action}")
             enhanced_lines.append(enhanced_action)
         else:
             enhanced_lines.append(line)
     
-    return '\n'.join(enhanced_lines)
+    result = '\n'.join(enhanced_lines)
+    print(f"DEBUG: Final enhanced result=\n{result}")
+    return result
 
 def get_link_documentation():
     """
