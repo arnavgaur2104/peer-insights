@@ -85,13 +85,15 @@ def generate_impact_visualization(merchant_row, comparison_local, comparison_clu
         insight_text = lines[0].lower()
         if 'transaction value' in insight_text or 'avg' in insight_text or 'value' in insight_text:
             metric = 'Avg Txn Value'
+        elif 'repeat' in insight_text or 'customer rate' in insight_text or 'retention' in insight_text:
+            metric = 'Repeat Customer Rate'
         elif 'daily count' in insight_text:
             metric = 'Daily Txn Count (Count)'
         elif 'daily txns' in insight_text:
             metric = 'Daily Txn Count (Txns)'
         elif 'daily' in insight_text or 'count' in insight_text or 'transaction' in insight_text or 'customers' in insight_text:
             metric = 'Daily Txn Count'
-        elif 'refund' in insight_text or 'rate' in insight_text:
+        elif 'refund' in insight_text and 'rate' in insight_text:
             metric = 'Refund Rate'
         elif 'income' in insight_text or 'level' in insight_text:
             metric = 'Income Level'
@@ -103,26 +105,42 @@ def generate_impact_visualization(merchant_row, comparison_local, comparison_clu
                 impact_pct = float(match.group(1)) / 100
                 
         if metric and impact_pct is not None:
-            # Get current and local average values
-            local_row = comparison_local[comparison_local['Metric'] == 'Daily Txn Count']  # Use base metric for data
+            # Map the detected metric to comparison dataframe metric names
+            metric_mapping = {
+                'Avg Txn Value': 'Avg Txn Value',
+                'Daily Txn Count': 'Daily Txn Count',
+                'Daily Txn Count (Count)': 'Daily Txn Count',
+                'Daily Txn Count (Txns)': 'Daily Txn Count',
+                'Refund Rate': 'Refund Rate',
+                'Repeat Customer Rate': 'Repeat Customer Rate',
+                'Income Level': 'Income Level'
+            }
+            
+            comparison_metric = metric_mapping.get(metric, 'Daily Txn Count')
+            
+            # Get current and local average values using the specific metric's raw values
+            local_row = comparison_local[comparison_local['Metric'] == comparison_metric]
             if not local_row.empty:
-                current_value = local_row.iloc[0]['Merchant Value']
-                local_avg = local_row.iloc[0]['Local Avg']
+                current_value = local_row.iloc[0]['Merchant Raw']
+                local_avg = local_row.iloc[0]['Local Raw']
                 
                 # Get cluster average if available
                 cluster_avg = None
                 if comparison_cluster is not None:
-                    cluster_row = comparison_cluster[comparison_cluster['Metric'] == 'Daily Txn Count']
+                    cluster_row = comparison_cluster[comparison_cluster['Metric'] == comparison_metric]
                     if not cluster_row.empty:
-                        cluster_avg = cluster_row.iloc[0]['Cluster Avg']
+                        cluster_avg = cluster_row.iloc[0]['Cluster Raw']
                 
                 # Calculate expected value based on impact
                 if metric == 'Income Level':
                     expected_value = current_value
-                elif metric in ['Avg Txn Value', 'Daily Txn Count', 'Daily Txn Count (Count)', 'Daily Txn Count (Txns)']:
+                elif metric in ['Avg Txn Value', 'Daily Txn Count', 'Daily Txn Count (Count)', 'Daily Txn Count (Txns)', 'Repeat Customer Rate']:
+                    expected_value = current_value * (1 + impact_pct)  # Higher is better
+                elif metric in ['Refund Rate']:
+                    expected_value = current_value * (1 - impact_pct)  # Lower is better
+                else:
+                    # Default to increase for unknown metrics
                     expected_value = current_value * (1 + impact_pct)
-                else:  # Refund Rate
-                    expected_value = current_value * (1 - impact_pct)
                 
                 impact_data.append({
                     'metric': metric,
@@ -158,10 +176,14 @@ def generate_crisp_insights(merchant_row, comparison_local, comparison_cluster, 
             if 'income' in metric.lower():
                 continue
                 
-            merchant_value = row['Merchant Value']
-            local_avg = row['Local Avg']
+            merchant_value = row['Merchant Value']  # Display value
+            local_avg = row['Local Avg']  # Display value
             performance = row['Performance']
-            gap = ((merchant_value - local_avg) / local_avg) * 100
+            
+            # Use raw values for gap calculation
+            merchant_raw = row.get('Merchant Raw', 0)
+            local_raw = row.get('Local Raw', 0)
+            gap = ((merchant_raw - local_raw) / local_raw) * 100 if local_raw != 0 else 0
             
             # Add context about whether the metric is good or bad
             metric_context = ""
@@ -175,6 +197,11 @@ def generate_crisp_insights(merchant_row, comparison_local, comparison_cluster, 
                     metric_context = " (Good: Higher is better)"
                 else:
                     metric_context = " (Issue: Lower than average)"
+            elif metric == 'Repeat Customer Rate':
+                if gap > 0:
+                    metric_context = " (Good: Higher is better)"
+                else:
+                    metric_context = " (Issue: Lower than average)"
             elif metric == 'Refund Rate':
                 if gap < 0:
                     metric_context = " (Good: Lower is better)"
@@ -184,8 +211,8 @@ def generate_crisp_insights(merchant_row, comparison_local, comparison_cluster, 
             performance_metrics.append(f"""
             📊 {metric}{metric_context}
             ──────────────────────────────
-            • Your Value: {merchant_value:.2f}
-            • Local Average: {local_avg:.2f}
+            • Your Value: {merchant_value}
+            • Local Average: {local_avg}
             • Performance: {performance}
             • Gap: {gap:+.1f}%
             ──────────────────────────────
@@ -227,6 +254,8 @@ Rules:
 - For low avg transaction value, suggest how to increase it
 - For high refund rate, suggest how to reduce it
 - For low daily transactions, suggest how to increase footfall
+- For high repeat customer rate, suggest how to leverage loyalty
+- For low repeat customer rate, suggest how to improve retention
 - Always give specific expected percentage change in impact
 - IMPORTANT: Keep the emoji at the start of each line
 - IMPORTANT: Keep the format exactly as shown in the examples
@@ -358,7 +387,8 @@ def format_quick_comparison(comparison_df, comp_type):
     formatted = f"**{comp_type} Average Comparison:**\n"
     for _, row in comparison_df.iterrows():
         if pd.notna(row['Performance']):
-            formatted += f"- {row['Metric']}: {row['Merchant Value']:.2f} vs {row[f'{comp_type} Avg']:.2f}\n"
+            # Use the formatted display values directly
+            formatted += f"- {row['Metric']}: {row['Merchant Value']} vs {row[f'{comp_type} Avg']}\n"
     return formatted
 
 def format_detailed_comparison(comparison_df, comp_type):
@@ -369,11 +399,20 @@ def format_detailed_comparison(comparison_df, comp_type):
     formatted = f"**{comp_type} Market Analysis:**\n"
     for _, row in comparison_df.iterrows():
         if pd.notna(row['Performance']):
+            # Calculate percentage difference using raw values
+            merchant_raw = row.get('Merchant Raw', 0)
+            avg_raw = row.get(f'{comp_type} Raw', 0)
+            
+            if avg_raw != 0:
+                diff_pct = ((merchant_raw - avg_raw) / avg_raw * 100)
+            else:
+                diff_pct = 0
+                
             formatted += f"- {row['Metric']}:\n"
-            formatted += f"  * Current: {row['Merchant Value']:.2f}\n"
-            formatted += f"  * {comp_type} Average: {row[f'{comp_type} Avg']:.2f}\n"
+            formatted += f"  * Current: {row['Merchant Value']}\n"
+            formatted += f"  * {comp_type} Average: {row[f'{comp_type} Avg']}\n"
             formatted += f"  * Performance: {row['Performance']}\n"
-            formatted += f"  * Difference: {((row['Merchant Value'] - row[f'{comp_type} Avg']) / row[f'{comp_type} Avg'] * 100):.1f}%\n"
+            formatted += f"  * Difference: {diff_pct:.1f}%\n"
     return formatted
 
 def extract_percentage_from_insight(insight_text):
@@ -456,13 +495,15 @@ def format_insights_for_display(insights_text, impact_data=None):
             # More comprehensive metric detection with unique identifiers
             if 'transaction value' in insight_text or 'avg' in insight_text or 'value' in insight_text:
                 metric = 'Avg Txn Value'
+            elif 'repeat' in insight_text or 'customer rate' in insight_text or 'retention' in insight_text:
+                metric = 'Repeat Customer Rate'
             elif 'daily count' in insight_text:
                 metric = 'Daily Txn Count (Count)'
             elif 'daily txns' in insight_text:
                 metric = 'Daily Txn Count (Txns)'
             elif 'daily' in insight_text or 'count' in insight_text or 'transaction' in insight_text or 'customers' in insight_text:
                 metric = 'Daily Txn Count'
-            elif 'refund' in insight_text or 'rate' in insight_text:
+            elif 'refund' in insight_text and 'rate' in insight_text:
                 metric = 'Refund Rate'
             elif 'income' in insight_text or 'level' in insight_text:
                 metric = 'Income Level'

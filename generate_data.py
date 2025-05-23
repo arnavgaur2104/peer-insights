@@ -37,14 +37,17 @@ def generate_merchant_chunk(start_idx, n_merchants):
             avg_txn_value = np.random.uniform(100, 500)
             daily_txn_count = np.random.randint(30, 100)
             refund_rate = np.random.uniform(0.01, 0.1)
+            repeat_customer_rate = np.random.uniform(0.25, 0.60)  # 25-60% for retail
         elif industry == 'Restaurant':
             avg_txn_value = np.random.uniform(300, 1000)
             daily_txn_count = np.random.randint(20, 80)
             refund_rate = np.random.uniform(0.01, 0.05)
+            repeat_customer_rate = np.random.uniform(0.35, 0.75)  # 35-75% for restaurants
         else:  # Fashion
             avg_txn_value = np.random.uniform(800, 3000)
             daily_txn_count = np.random.randint(10, 40)
             refund_rate = np.random.uniform(0.02, 0.15)
+            repeat_customer_rate = np.random.uniform(0.15, 0.45)  # 15-45% for fashion
 
         merchants.append({
             'merchant_id': f'M{1000+idx}',
@@ -56,7 +59,8 @@ def generate_merchant_chunk(start_idx, n_merchants):
             'weather_preference': weather_preference,
             'avg_txn_value': round(avg_txn_value, 2),
             'daily_txn_count': daily_txn_count,
-            'refund_rate': round(refund_rate, 4)
+            'refund_rate': round(refund_rate, 4),
+            'repeat_customer_rate': round(repeat_customer_rate, 4)
         })
     return pd.DataFrame(merchants)
 
@@ -74,12 +78,14 @@ def generate_competitor_chunk(merchant_chunk, comp_counter):
             comp['avg_txn_value'] *= np.random.uniform(0.9, 1.1)
             comp['daily_txn_count'] *= np.random.uniform(0.8, 1.2)
             comp['refund_rate'] *= np.random.uniform(0.8, 1.2)
+            comp['repeat_customer_rate'] *= np.random.uniform(0.85, 1.15)
             comp['income_level'] *= np.random.uniform(0.95, 1.05)
 
             # Ensure non-negative values and round
             comp['avg_txn_value'] = round(max(0, comp['avg_txn_value']), 2)
             comp['daily_txn_count'] = max(0, int(comp['daily_txn_count']))
             comp['refund_rate'] = round(max(0, min(1, comp['refund_rate'])), 4)
+            comp['repeat_customer_rate'] = round(max(0, min(1, comp['repeat_customer_rate'])), 4)
             comp['income_level'] = round(max(0, comp['income_level']), 2)
 
             competitors.append(comp)

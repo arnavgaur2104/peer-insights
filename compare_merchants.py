@@ -11,7 +11,7 @@ import multiprocessing
 
 # --- Define metrics for comparison and clustering ---
 # Ensure these match columns in generate_data.py
-NUMERIC_METRICS = ['avg_txn_value', 'daily_txn_count', 'refund_rate', 'income_level']
+NUMERIC_METRICS = ['avg_txn_value', 'daily_txn_count', 'refund_rate', 'repeat_customer_rate', 'income_level']
 CATEGORICAL_METRICS = ['store_type'] # Add more if needed
 ALL_METRICS = NUMERIC_METRICS + CATEGORICAL_METRICS
 
@@ -207,7 +207,8 @@ def get_comparison_data(merchant_id, merchants_df, competitors_df):
             continue # Skip if no competitors/peers or averages couldn't be calculated
 
         comparison = {
-            'Metric': [], 'Merchant Value': [], f'{comp_type.capitalize()} Avg': [], 'Performance': []
+            'Metric': [], 'Merchant Value': [], f'{comp_type.capitalize()} Avg': [], 'Performance': [],
+            'Merchant Raw': [], f'{comp_type.capitalize()} Raw': []  # Add raw values for calculations
         }
         for metric in NUMERIC_METRICS:
              if metric not in merchant_row or pd.isna(merchant_row[metric]):
@@ -219,7 +220,7 @@ def get_comparison_data(merchant_id, merchants_df, competitors_df):
              if pd.isna(competitor_value):
                   performance = 'N/A' # Cannot compare
              # Define which metrics are 'higher is better' vs 'lower is better'
-             elif metric in ['avg_txn_value', 'daily_txn_count', 'income_level']:
+             elif metric in ['avg_txn_value', 'daily_txn_count', 'repeat_customer_rate', 'income_level']:
                  performance = '✅ Above Avg' if merchant_value >= competitor_value else '❌ Below Avg'
              elif metric in ['refund_rate']:
                  performance = '✅ Below Avg' if merchant_value <= competitor_value else '❌ Above Avg'
@@ -227,8 +228,31 @@ def get_comparison_data(merchant_id, merchants_df, competitors_df):
                  performance = 'N/A' # Metric type not defined for comparison
 
              comparison['Metric'].append(metric.replace('_', ' ').title())
-             comparison['Merchant Value'].append(round(merchant_value, 2))
-             comparison[f'{comp_type.capitalize()} Avg'].append(round(competitor_value, 2) if not pd.isna(competitor_value) else 'N/A')
+             
+             # Store raw values for calculations
+             comparison['Merchant Raw'].append(merchant_value)
+             comparison[f'{comp_type.capitalize()} Raw'].append(competitor_value if not pd.isna(competitor_value) else 0)
+             
+             # Format display values based on metric type
+             if metric in ['repeat_customer_rate', 'refund_rate']:
+                 # Display as percentage
+                 display_merchant_value = f"{merchant_value*100:.1f}%"
+                 display_competitor_value = f"{competitor_value*100:.1f}%" if not pd.isna(competitor_value) else 'N/A'
+             elif metric == 'avg_txn_value':
+                 # Display as currency
+                 display_merchant_value = f"₹{merchant_value:.2f}"
+                 display_competitor_value = f"₹{competitor_value:.2f}" if not pd.isna(competitor_value) else 'N/A'
+             elif metric == 'income_level':
+                 # Display as currency
+                 display_merchant_value = f"₹{merchant_value:.2f}"
+                 display_competitor_value = f"₹{competitor_value:.2f}" if not pd.isna(competitor_value) else 'N/A'
+             else:
+                 # Display as number
+                 display_merchant_value = round(merchant_value, 2)
+                 display_competitor_value = round(competitor_value, 2) if not pd.isna(competitor_value) else 'N/A'
+             
+             comparison['Merchant Value'].append(display_merchant_value)
+             comparison[f'{comp_type.capitalize()} Avg'].append(display_competitor_value)
              comparison['Performance'].append(performance)
 
         comparison_dfs[comp_type] = pd.DataFrame(comparison)

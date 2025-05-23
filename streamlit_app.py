@@ -388,6 +388,86 @@ def get_performance_insights(metric, merchant_value, avg_value, performance_stat
                 "• Create customer feedback systems for continuous improvement"
             ]
     
+    elif "repeat customer rate" in metric_lower or "repeat" in metric_lower:
+        # Store type specific recommendations for customer retention
+        if store_type == "Mall":
+            if industry == "Restaurant":
+                insights = [
+                    "🔄 Build Mall Dining Loyalty",
+                    "• Create loyalty cards with mall shopping integration",
+                    "• Offer special discounts for movie + meal combos",
+                    "• Remember regular customers' preferences and orders",
+                    "• Create family-friendly loyalty programs for weekend visits"
+                ]
+            elif industry == "Retail":
+                insights = [
+                    "🔄 Encourage Mall Return Visits",
+                    "• Create membership programs with exclusive mall benefits",
+                    "• Send SMS alerts for new arrivals and sales",
+                    "• Offer personal shopping services for repeat customers",
+                    "• Partner with other mall stores for cross-loyalty rewards"
+                ]
+            elif industry == "Fashion":
+                insights = [
+                    "🔄 Develop Fashion Loyalty Community",
+                    "• Create VIP styling sessions for repeat customers",
+                    "• Send personalized style recommendations via SMS",
+                    "• Offer early access to new collections",
+                    "• Create seasonal fashion events for loyal customers"
+                ]
+        
+        elif store_type == "Street Front":
+            if industry == "Restaurant":
+                insights = [
+                    "🔄 Become the Neighborhood Regular Spot",
+                    "• Remember customers' names and usual orders",
+                    "• Create punch cards for free meals after X visits",
+                    "• Offer home delivery loyalty discounts",
+                    "• Send SMS updates about daily specials to regulars"
+                ]
+            elif industry == "Retail":
+                insights = [
+                    "🔄 Build Local Customer Relationships",
+                    "• Maintain customer purchase history for recommendations",
+                    "• Offer credit facilities for trusted repeat customers",
+                    "• Send SMS reminders for regular purchase items",
+                    "• Create neighborhood customer referral programs"
+                ]
+            elif industry == "Fashion":
+                insights = [
+                    "🔄 Establish Local Fashion Authority",
+                    "• Keep customer size and style preferences on file",
+                    "• Offer alteration services for repeat customers",
+                    "• Send style trend updates to loyal customers",
+                    "• Create local fashion influencer community programs"
+                ]
+        
+        elif store_type == "Standalone":
+            if industry == "Restaurant":
+                insights = [
+                    "🔄 Create Destination Dining Loyalty",
+                    "• Implement digital loyalty program with mobile tracking",
+                    "• Create exclusive chef's table experiences for VIP customers",
+                    "• Offer catering discounts for repeat customers",
+                    "• Send personalized meal recommendations based on history"
+                ]
+            elif industry == "Retail":
+                insights = [
+                    "🔄 Build Specialized Customer Base",
+                    "• Create expert consultation relationships with repeat buyers",
+                    "• Offer bulk purchase loyalty discounts",
+                    "• Maintain detailed customer preference databases",
+                    "• Provide exclusive access to premium products for loyal customers"
+                ]
+            elif industry == "Fashion":
+                insights = [
+                    "🔄 Develop Boutique Customer Relationships",
+                    "• Offer personal styling consultations for repeat customers",
+                    "• Create exclusive fashion preview events",
+                    "• Maintain detailed style profiles for each customer",
+                    "• Provide wardrobe consultation services for loyal clients"
+                ]
+    
     # Add performance gap specific advice
     if is_large_gap:
         if store_type == "Mall":
@@ -559,17 +639,37 @@ if merchant_id:
         
         # Quick stats in cards
         with col2:
+            # Find avg transaction value comparison for delta calculation
+            avg_txn_delta = None
+            if comparison_df_local is not None:
+                avg_txn_row = comparison_df_local[comparison_df_local['Metric'] == 'Avg Txn Value']
+                if not avg_txn_row.empty:
+                    merchant_raw = avg_txn_row.iloc[0]['Merchant Raw']
+                    local_raw = avg_txn_row.iloc[0]['Local Raw']
+                    if local_raw > 0:
+                        avg_txn_delta = f"{((merchant_raw - local_raw) / local_raw * 100):.1f}%"
+            
             st.metric(
                 "Average Transaction",
                 f"₹{merchant_row.get('avg_txn_value', 0):.2f}",
-                f"{((merchant_row.get('avg_txn_value', 0) - comparison_df_local['Local Avg'].iloc[0]) / comparison_df_local['Local Avg'].iloc[0] * 100):.1f}%" if comparison_df_local is not None else None
+                avg_txn_delta
             )
         
         with col3:
+            # Find daily transaction count comparison for delta calculation
+            daily_txn_delta = None
+            if comparison_df_local is not None:
+                daily_txn_row = comparison_df_local[comparison_df_local['Metric'] == 'Daily Txn Count']
+                if not daily_txn_row.empty:
+                    merchant_raw = daily_txn_row.iloc[0]['Merchant Raw']
+                    local_raw = daily_txn_row.iloc[0]['Local Raw']
+                    if local_raw > 0:
+                        daily_txn_delta = f"{((merchant_raw - local_raw) / local_raw * 100):.1f}%"
+            
             st.metric(
                 "Daily Customers",
                 f"{merchant_row.get('daily_txn_count', 0)}",
-                f"{((merchant_row.get('daily_txn_count', 0) - comparison_df_local['Local Avg'].iloc[1]) / comparison_df_local['Local Avg'].iloc[1] * 100):.1f}%" if comparison_df_local is not None else None
+                daily_txn_delta
             )
 
         # Main content in tabs
@@ -763,6 +863,7 @@ if merchant_id:
                         status_class = "status-good" if "✅" in str(row['Performance']) else "status-warning" if "⚠️" in str(row['Performance']) else "status-bad"
                         
                         # Display performance section
+                        impact_pct = ((row['Merchant Raw'] - row['Local Raw']) / row['Local Raw'] * 100) if row['Local Raw'] != 0 else 0
                         st.markdown(f"""
                         <div class="performance-section">
                             <div class="performance-title">{row['Metric']}</div>
@@ -777,7 +878,7 @@ if merchant_id:
                             </div>
                             <div class="performance-details">
                                 <div class="performance-detail-item">
-                                    <span class="performance-detail-value">Impact:</span> {((row['Merchant Value'] - row['Local Avg']) / row['Local Avg'] * 100):.1f}% vs local average
+                                    <span class="performance-detail-value">Impact:</span> {impact_pct:.1f}% vs local average
                                 </div>
                             </div>
                         </div>
@@ -786,8 +887,8 @@ if merchant_id:
                         # Display insights separately using Streamlit components
                         insights = get_performance_insights(
                             row['Metric'], 
-                            row['Merchant Value'], 
-                            row['Local Avg'], 
+                            row['Merchant Raw'], 
+                            row['Local Raw'], 
                             row['Performance'],
                             merchant_row.get('industry', ''),
                             merchant_row.get('store_type', '')
@@ -813,6 +914,7 @@ if merchant_id:
                         status_class = "status-good" if "✅" in str(row['Performance']) else "status-warning" if "⚠️" in str(row['Performance']) else "status-bad"
                         
                         # Display performance section
+                        impact_pct = ((row['Merchant Raw'] - row['Cluster Raw']) / row['Cluster Raw'] * 100) if row['Cluster Raw'] != 0 else 0
                         st.markdown(f"""
                         <div class="performance-section">
                             <div class="performance-title">{row['Metric']}</div>
@@ -827,7 +929,7 @@ if merchant_id:
                             </div>
                             <div class="performance-details">
                                 <div class="performance-detail-item">
-                                    <span class="performance-detail-value">Impact:</span> {((row['Merchant Value'] - row['Cluster Avg']) / row['Cluster Avg'] * 100):.1f}% vs cluster average
+                                    <span class="performance-detail-value">Impact:</span> {impact_pct:.1f}% vs cluster average
                                 </div>
                             </div>
                         </div>
@@ -836,8 +938,8 @@ if merchant_id:
                         # Display insights separately using Streamlit components
                         insights = get_performance_insights(
                             row['Metric'], 
-                            row['Merchant Value'], 
-                            row['Cluster Avg'], 
+                            row['Merchant Raw'], 
+                            row['Cluster Raw'], 
                             row['Performance'],
                             merchant_row.get('industry', ''),
                             merchant_row.get('store_type', '')
