@@ -158,35 +158,31 @@ st.markdown("""
 # --- Load Data (Define Function AFTER set_page_config) ---
 @st.cache_data # Cache data loading
 def load_data():
-    """Loads merchant and competitor data from CSV files."""
+    """Loads merchant data from CSV files."""
     try:
         merchants = pd.read_csv('data/merchants.csv')
-        competitors = pd.read_csv('data/competitors.csv')
         # Basic validation
         if merchants.empty:
              st.warning("Merchant data file (merchants.csv) is empty. Please run generate_data.py.")
              # Return None if merchants is empty as it's crucial
-             return None, competitors
-        if competitors.empty:
-              st.warning("Competitor data file (competitors.csv) is empty. Comparisons may be limited.")
-              # Allow continuing but with a warning
-        return merchants, competitors
+             return None
+        return merchants
     except FileNotFoundError:
         # Use st.error ONLY after set_page_config has been called
-        st.error("Error: `data/merchants.csv` or `data/competitors.csv` not found. Please run `generate_data.py` first.")
-        return None, None # Return None to indicate failure
+        st.error("Error: `data/merchants.csv` not found. Please run `generate_data.py` first.")
+        return None # Return None to indicate failure
     except pd.errors.EmptyDataError as e:
-         st.error(f"Error: A data file is empty or invalid ({e}). Please check data/merchants.csv and data/competitors.csv.")
-         return None, None
+         st.error(f"Error: A data file is empty or invalid ({e}). Please check data/merchants.csv.")
+         return None
     except Exception as e:
          st.error(f"An unexpected error occurred during data loading: {e}")
          st.text(traceback.format_exc())
-         return None, None
+         return None
 
 
 # --- Call Load Data Function ---
 # Call the function after defining it and after set_page_config
-merchants, competitors = load_data()
+merchants = load_data()
 
 def get_performance_insights(metric, merchant_value, avg_value, performance_status, industry, store_type):
     """Generate actionable insights for below-average performance metrics."""
@@ -595,18 +591,12 @@ with st.sidebar:
         st.markdown("""
         ### How We Analyze Your Business
 
-        We use two powerful methods to understand your business performance:
+        We use advanced machine learning clustering to understand your business performance:
 
-        #### 1. Local Competitors 👥
-        - Businesses in your immediate area (same pincode)
-        - Same industry as yours
-        - Direct competition for customers
-        - Helps you understand your local market position
-
-        #### 2. Industry Clusters 🔄
-        - Businesses in the **same industry** with similar performance patterns
-        - Grouped by operational similarities within your industry
-        - May be in different locations but share characteristics:
+        #### Industry-Based Clustering 🔄
+        - Groups businesses in the **same industry** with similar performance patterns
+        - Analyzes operational similarities within your industry
+        - Compares against businesses with:
             - Similar transaction patterns
             - Comparable customer behavior
             - Similar operational efficiency
@@ -621,10 +611,16 @@ with st.sidebar:
         - Understand industry-wide trends and opportunities
 
         #### Example Clusters
-        - **Restaurant Cluster A**: High-volume, quick service
-        - **Restaurant Cluster B**: Premium dining, higher ticket size
-        - **Retail Cluster A**: High footfall, lower avg transaction
+        - **Restaurant Cluster A**: High-volume, quick service restaurants
+        - **Restaurant Cluster B**: Premium dining, higher ticket size restaurants
+        - **Retail Cluster A**: High footfall, convenience stores
         - **Fashion Cluster A**: Boutique stores, premium pricing
+
+        #### Analysis Benefits
+        - Compare against truly similar businesses
+        - Get industry-specific actionable recommendations
+        - Understand your competitive position within your industry
+        - Access best practices from top performers in your sector
         """)
     
     # Add business tools guide
@@ -644,7 +640,7 @@ with st.sidebar:
 # --- Main Area ---
 if merchant_id:
     # Get merchant data
-    merchant_row, comparison_df_local, comparison_df_cluster, local_competitors, cluster_peers, cluster_averages = get_comparison_data(merchant_id, merchants, competitors)
+    merchant_row, comparison_df_local, comparison_df_cluster, local_competitors, cluster_peers, cluster_averages = get_comparison_data(merchant_id, merchants)
 
     if merchant_row is not None:
         # Create a header with merchant info
@@ -657,13 +653,13 @@ if merchant_id:
         with col2:
             # Find avg transaction value comparison for delta calculation
             avg_txn_delta = None
-            if comparison_df_local is not None:
-                avg_txn_row = comparison_df_local[comparison_df_local['Metric'] == 'Avg Txn Value']
+            if comparison_df_cluster is not None:
+                avg_txn_row = comparison_df_cluster[comparison_df_cluster['Metric'] == 'Avg Txn Value']
                 if not avg_txn_row.empty:
                     merchant_raw = avg_txn_row.iloc[0]['Merchant Raw']
-                    local_raw = avg_txn_row.iloc[0]['Local Raw']
-                    if local_raw > 0:
-                        avg_txn_delta = f"{((merchant_raw - local_raw) / local_raw * 100):.1f}%"
+                    cluster_raw = avg_txn_row.iloc[0]['Cluster Raw']
+                    if cluster_raw > 0:
+                        avg_txn_delta = f"{((merchant_raw - cluster_raw) / cluster_raw * 100):.1f}%"
             
             st.metric(
                 "Average Transaction",
@@ -674,13 +670,13 @@ if merchant_id:
         with col3:
             # Find daily transaction count comparison for delta calculation
             daily_txn_delta = None
-            if comparison_df_local is not None:
-                daily_txn_row = comparison_df_local[comparison_df_local['Metric'] == 'Daily Txn Count']
+            if comparison_df_cluster is not None:
+                daily_txn_row = comparison_df_cluster[comparison_df_cluster['Metric'] == 'Daily Txn Count']
                 if not daily_txn_row.empty:
                     merchant_raw = daily_txn_row.iloc[0]['Merchant Raw']
-                    local_raw = daily_txn_row.iloc[0]['Local Raw']
-                    if local_raw > 0:
-                        daily_txn_delta = f"{((merchant_raw - local_raw) / local_raw * 100):.1f}%"
+                    cluster_raw = daily_txn_row.iloc[0]['Cluster Raw']
+                    if cluster_raw > 0:
+                        daily_txn_delta = f"{((merchant_raw - cluster_raw) / cluster_raw * 100):.1f}%"
             
             st.metric(
                 "Daily Customers",
@@ -737,16 +733,10 @@ if merchant_id:
                                 # Create bar chart
                                 fig = go.Figure()
                                 
-                                # Add bars for current, expected, local average, and cluster average
-                                x_labels = ['Current', 'Local Avg']
-                                y_values = [data['current'], data['local_avg']]
-                                colors = ['#4dabf7', '#adb5bd']
-                                
-                                # Add cluster average if available
-                                if data['cluster_avg'] is not None:
-                                    x_labels.append('Cluster Avg')
-                                    y_values.append(data['cluster_avg'])
-                                    colors.append('#e67700')
+                                # Add bars for current, expected, and cluster average
+                                x_labels = ['Current', 'Cluster Avg']
+                                y_values = [data['current'], data['cluster_avg']]
+                                colors = ['#4dabf7', '#e67700']
                                 
                                 # Only add expected value for non-income metrics
                                 if data['metric'] != 'Income Level':
@@ -809,9 +799,7 @@ if merchant_id:
                                 """
                                 if data['metric'] != 'Income Level':
                                     details_html += f"<span style='color: #2b8a3e;' title='Expected value after implementing the suggested action'>●</span> Expected: {data['expected']:.2f} | "
-                                details_html += f"<span style='color: #adb5bd;' title='Average of businesses in your immediate area (same pincode and industry)'>●</span> Local Average: {data['local_avg']:.2f}"
-                                if data['cluster_avg'] is not None:
-                                    details_html += f" | <span style='color: #e67700;' title='Average of businesses with similar performance patterns, regardless of location'>●</span> Cluster Average: {data['cluster_avg']:.2f}"
+                                details_html += f"<span style='color: #e67700;' title='Average of businesses with similar performance patterns in your industry'>●</span> Cluster Average: {data['cluster_avg']:.2f}"
                                 details_html += "</p></div>"
                                 
                                 st.markdown(details_html, unsafe_allow_html=True)
@@ -882,20 +870,20 @@ if merchant_id:
             col1, col2 = st.columns(2)
             
             with col1:
-                st.markdown("### Local Market Position")
+                st.markdown("### Similar Business Comparison")
                 if comparison_df_local is not None:
                     for _, row in comparison_df_local.iterrows():
                         status_class = "status-good" if "✅" in str(row['Performance']) else "status-warning" if "⚠️" in str(row['Performance']) else "status-bad"
                         
-                        # Display performance section
-                        impact_pct = ((row['Merchant Raw'] - row['Local Raw']) / row['Local Raw'] * 100) if row['Local Raw'] != 0 else 0
+                        # Display performance section - using cluster data
+                        impact_pct = ((row['Merchant Raw'] - row['Cluster Raw']) / row['Cluster Raw'] * 100) if row['Cluster Raw'] != 0 else 0
                         st.markdown(f"""
                         <div class="performance-section">
                             <div class="performance-title">{row['Metric']}</div>
                             <div class="performance-metrics">
                                 <div class="performance-metric">
                                     <p>Your Value: <span class="performance-value">{row['Merchant Value']}</span></p>
-                                    <p>Local Average: <span class="performance-average">{row['Local Avg']}</span></p>
+                                    <p>Similar Business Average: <span class="performance-average">{row['Cluster Avg']}</span></p>
                                 </div>
                                 <div class="performance-metric">
                                     <p class="performance-status {status_class}">{row['Performance']}</p>
@@ -903,7 +891,7 @@ if merchant_id:
                             </div>
                             <div class="performance-details">
                                 <div class="performance-detail-item">
-                                    <span class="performance-detail-value">Impact:</span> {impact_pct:.1f}% vs local average
+                                    <span class="performance-detail-value">Impact:</span> {impact_pct:.1f}% vs similar businesses
                                 </div>
                             </div>
                         </div>
@@ -913,7 +901,7 @@ if merchant_id:
                         insights = get_performance_insights(
                             row['Metric'], 
                             row['Merchant Raw'], 
-                            row['Local Raw'], 
+                            row['Cluster Raw'], 
                             row['Performance'],
                             merchant_row.get('industry', ''),
                             merchant_row.get('store_type', '')
@@ -933,7 +921,7 @@ if merchant_id:
                             st.markdown("</div></div>", unsafe_allow_html=True)
 
             with col2:
-                st.markdown("### Cluster Comparison")
+                st.markdown("### Industry Cluster Analysis")
                 if comparison_df_cluster is not None:
                     for _, row in comparison_df_cluster.iterrows():
                         status_class = "status-good" if "✅" in str(row['Performance']) else "status-warning" if "⚠️" in str(row['Performance']) else "status-bad"
@@ -1015,17 +1003,17 @@ if merchant_id:
         
         if comparison_df_local is not None:
             col_dl1.download_button(
-                "📊 Local Comparison",
+                "📊 Business Comparison",
                 comparison_df_local.to_csv(index=False).encode('utf-8'),
-                f"{merchant_id}_local_comparison.csv",
+                f"{merchant_id}_business_comparison.csv",
                 "text/csv"
             )
         
         if comparison_df_cluster is not None:
             col_dl2.download_button(
-                "📈 Cluster Comparison",
+                "📈 Industry Analysis",
                 comparison_df_cluster.to_csv(index=False).encode('utf-8'),
-                f"{merchant_id}_cluster_comparison.csv",
+                f"{merchant_id}_industry_analysis.csv",
                 "text/csv"
             )
         

@@ -127,14 +127,14 @@ def generate_impact_visualization(merchant_row, comparison_local, comparison_clu
         if impact_pct is None:
             continue
         
-        # Find corresponding metric in comparison data
-        metric_row = comparison_local[comparison_local['Metric'] == metric]
+        # Find corresponding metric in cluster comparison data
+        metric_row = comparison_cluster[comparison_cluster['Metric'] == metric]
         if metric_row.empty:
             continue
         
         metric_data = metric_row.iloc[0]
         current_value = metric_data['Merchant Raw']
-        local_avg = metric_data['Local Raw']
+        cluster_avg = metric_data['Cluster Raw']
         
         # Calculate expected value after improvement
         if metric == 'Refund Rate':
@@ -144,19 +144,11 @@ def generate_impact_visualization(merchant_row, comparison_local, comparison_clu
             # For other metrics, improvement means increase
             expected_value = current_value * (1 + impact_pct)
         
-        # Get cluster average if available
-        cluster_avg = None
-        if comparison_cluster is not None:
-            cluster_metric_row = comparison_cluster[comparison_cluster['Metric'] == metric]
-            if not cluster_metric_row.empty:
-                cluster_avg = cluster_metric_row.iloc[0]['Cluster Raw']
-        
         impact_data.append({
             'metric': metric,
             'insight_index': insight_index,
             'current': current_value,
             'expected': expected_value,
-            'local_avg': local_avg,
             'cluster_avg': cluster_avg,
             'impact_pct': impact_pct
         })
@@ -177,62 +169,67 @@ def generate_crisp_insights(merchant_row, comparison_local, comparison_cluster, 
     ──────────────────────────────
     """
 
-    # Format performance metrics with better aesthetics
+    # Format performance metrics with better aesthetics (use cluster data only)
     performance_metrics = []
-    if comparison_local is not None:
-        for _, row in comparison_local.iterrows():
+    comparison_data = comparison_cluster if comparison_cluster is not None else comparison_local
+    
+    if comparison_data is not None:
+        for _, row in comparison_data.iterrows():
             metric = row['Metric']
             if 'income' in metric.lower():
                 continue
                 
             merchant_value = row['Merchant Value']  # Display value
-            local_avg = row['Local Avg']  # Display value
-            performance = row['Performance']
             
-            # Use raw values for gap calculation
-            merchant_raw = row.get('Merchant Raw', 0)
-            local_raw = row.get('Local Raw', 0)
-            gap = ((merchant_raw - local_raw) / local_raw) * 100 if local_raw != 0 else 0
-            
-            # Add context about whether the metric is good or bad
-            metric_context = ""
-            if metric == 'Avg Txn Value':
-                if gap > 0:
-                    metric_context = " (Good: Higher is better)"
-                else:
-                    metric_context = " (Issue: Lower than average)"
-            elif metric == 'Daily Txn Count':
-                if gap > 0:
-                    metric_context = " (Good: Higher is better)"
-                else:
-                    metric_context = " (Issue: Lower than average)"
-            elif metric == 'Repeat Customer Rate':
-                if gap > 0:
-                    metric_context = " (Good: Higher is better)"
-                else:
-                    metric_context = " (Issue: Lower than average)"
-            elif metric == 'Refund Rate':
-                if gap < 0:
-                    metric_context = " (Good: Lower is better)"
-                else:
-                    metric_context = " (Issue: Higher than average)"
-            
-            performance_metrics.append(f"""
-            📊 {metric}{metric_context}
-            ──────────────────────────────
-            • Your Value: {merchant_value}
-            • Local Average: {local_avg}
-            • Performance: {performance}
-            • Gap: {gap:+.1f}%
-            ──────────────────────────────
-            """)
+            # Use cluster average if available, otherwise skip
+            if 'Cluster Avg' in row:
+                cluster_avg = row['Cluster Avg']  # Display value
+                performance = row['Performance']
+                
+                # Use raw values for gap calculation
+                merchant_raw = row.get('Merchant Raw', 0)
+                cluster_raw = row.get('Cluster Raw', 0)
+                gap = ((merchant_raw - cluster_raw) / cluster_raw) * 100 if cluster_raw != 0 else 0
+                
+                # Add context about whether the metric is good or bad
+                metric_context = ""
+                if metric == 'Avg Txn Value':
+                    if gap > 0:
+                        metric_context = " (Good: Higher than similar businesses)"
+                    else:
+                        metric_context = " (Issue: Lower than similar businesses)"
+                elif metric == 'Daily Txn Count':
+                    if gap > 0:
+                        metric_context = " (Good: Higher than similar businesses)"
+                    else:
+                        metric_context = " (Issue: Lower than similar businesses)"
+                elif metric == 'Repeat Customer Rate':
+                    if gap > 0:
+                        metric_context = " (Good: Higher than similar businesses)"
+                    else:
+                        metric_context = " (Issue: Lower than similar businesses)"
+                elif metric == 'Refund Rate':
+                    if gap < 0:
+                        metric_context = " (Good: Lower than similar businesses)"
+                    else:
+                        metric_context = " (Issue: Higher than similar businesses)"
+                
+                performance_metrics.append(f"""
+                📊 {metric}{metric_context}
+                ──────────────────────────────
+                • Your Value: {merchant_value}
+                • Similar Business Average: {cluster_avg}
+                • Performance: {performance}
+                • Gap: {gap:+.1f}%
+                ──────────────────────────────
+                """)
 
     # Create a concise prompt for Gemini with better formatting
     prompt = f"""As a retail business consultant, provide <= 3 key, actionable insights for this merchant. Keep each insight to 3 lines maximum:
 
 {merchant_profile}
 
-📈 Current Performance:
+📈 Current Performance vs Similar Businesses:
 {''.join(performance_metrics)}
 
 Format each insight using **exactly** this structure, with a **blank line between each insight**:
@@ -288,8 +285,8 @@ Make it super concise and actionable and personalized for each merchant's demogr
         raw_response = call_gemini_api(prompt)
         response = reformat_insights_multiline(raw_response)
         
-        # Generate impact visualization data BEFORE adding links (so parsing works correctly)
-        impact_data = generate_impact_visualization(merchant_row, comparison_local, comparison_cluster, response)
+        # Generate impact visualization data using cluster comparison
+        impact_data = generate_impact_visualization(merchant_row, comparison_data, comparison_cluster, response)
         
         # Enhance insights with actionable links AFTER generating impact data
         enhanced_response = enhance_insights_with_links(

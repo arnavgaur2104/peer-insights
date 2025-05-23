@@ -140,14 +140,14 @@ def cluster_merchants(merchants_df, n_clusters=3, batch_size=1000):
     """Wrapper function that calls the new industry-specific clustering."""
     return cluster_merchants_by_industry(merchants_df, n_clusters, batch_size)
 
-def get_comparison_data(merchant_id, merchants_df, competitors_df):
+def get_comparison_data(merchant_id, merchants_df):
     """
     Performs industry-specific clustering and generates comparison dataframes.
     Returns:
         - merchant_row (dict): Profile of the selected merchant.
-        - comparison_df (pd.DataFrame): Comparison vs local competitors avg.
+        - comparison_df (pd.DataFrame): Comparison vs cluster avg (no local competitors).
         - cluster_comparison_df (pd.DataFrame): Comparison vs cluster avg.
-        - local_competitors (pd.DataFrame): DataFrame of local competitors.
+        - local_competitors (pd.DataFrame): Empty DataFrame (removed).
         - cluster_peers (pd.DataFrame): DataFrame of merchants in the same cluster and industry.
         - cluster_averages (pd.Series): Average metrics for the merchant's cluster.
     """
@@ -167,18 +167,12 @@ def get_comparison_data(merchant_id, merchants_df, competitors_df):
     merchant_industry = merchant_row.get('industry', None)
 
 
-    # --- 3. Find Local Competitors (same pincode and industry) ---
-    local_competitors = competitors_df[
-        (competitors_df['pincode'] == merchant_row['pincode']) &
-        (competitors_df['industry'] == merchant_row['industry']) &
-        (competitors_df['merchant_id'] != merchant_id) # Exclude self if present
-    ].copy()
+    # --- 3. Local Competitors - REMOVED (no competitor data) ---
+    local_competitors = pd.DataFrame()  # Always empty
 
 
-    # --- 4. Calculate Local Competitor Averages ---
-    local_comp_avg = None
-    if not local_competitors.empty:
-        local_comp_avg = local_competitors[NUMERIC_METRICS].mean()
+    # --- 4. Local Competitor Averages - REMOVED ---
+    local_comp_avg = None  # No local competitor data
 
 
     # --- 5. Find Cluster Peers & Calculate Cluster Averages (same industry and cluster) ---
@@ -199,12 +193,13 @@ def get_comparison_data(merchant_id, merchants_df, competitors_df):
             print(f"No cluster peers found for {merchant_industry} industry, cluster {merchant_cluster}")
 
 
-    # --- 6. Build Comparison DataFrames ---
+    # --- 6. Build Comparison DataFrames (only cluster-based) ---
     comparison_dfs = {'local': None, 'cluster': None}
 
-    for comp_type, avg_metrics_series in [('local', local_comp_avg), ('cluster', cluster_averages)]:
+    # Only create cluster comparison (remove local competitor comparison)
+    for comp_type, avg_metrics_series in [('cluster', cluster_averages)]:
         if avg_metrics_series is None:
-            continue # Skip if no competitors/peers or averages couldn't be calculated
+            continue # Skip if no peers or averages couldn't be calculated
 
         comparison = {
             'Metric': [], 'Merchant Value': [], f'{comp_type.capitalize()} Avg': [], 'Performance': [],
@@ -259,9 +254,9 @@ def get_comparison_data(merchant_id, merchants_df, competitors_df):
 
     return (
         merchant_row,
-        comparison_dfs['local'],
-        comparison_dfs['cluster'],
-        local_competitors,
+        comparison_dfs['cluster'],  # Return cluster comparison as main comparison
+        comparison_dfs['cluster'],  # Same data for both returns  
+        local_competitors,  # Empty DataFrame
         cluster_peers,
         cluster_averages # Pass cluster averages for potential use in insights
     )

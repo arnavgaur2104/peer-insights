@@ -64,46 +64,16 @@ def generate_merchant_chunk(start_idx, n_merchants):
         })
     return pd.DataFrame(merchants)
 
-def generate_competitor_chunk(merchant_chunk, comp_counter):
-    """Generate competitors for a chunk of merchants."""
-    competitors = []
-    for _, row in merchant_chunk.iterrows():
-        n_competitors = np.random.randint(3, 8)
-        for _ in range(n_competitors):
-            comp = row.copy()
-            comp['merchant_id'] = f'C{comp_counter}'
-            comp_counter += 1
-            
-            # Vary competitor metrics
-            comp['avg_txn_value'] *= np.random.uniform(0.9, 1.1)
-            comp['daily_txn_count'] *= np.random.uniform(0.8, 1.2)
-            comp['refund_rate'] *= np.random.uniform(0.8, 1.2)
-            comp['repeat_customer_rate'] *= np.random.uniform(0.85, 1.15)
-            comp['income_level'] *= np.random.uniform(0.95, 1.05)
-
-            # Ensure non-negative values and round
-            comp['avg_txn_value'] = round(max(0, comp['avg_txn_value']), 2)
-            comp['daily_txn_count'] = max(0, int(comp['daily_txn_count']))
-            comp['refund_rate'] = round(max(0, min(1, comp['refund_rate'])), 4)
-            comp['repeat_customer_rate'] = round(max(0, min(1, comp['repeat_customer_rate'])), 4)
-            comp['income_level'] = round(max(0, comp['income_level']), 2)
-
-            competitors.append(comp)
-    return pd.DataFrame(competitors), comp_counter
-
 def generate_data(n_merchants=100000):
-    """Generate merchant and competitor data in chunks."""
-    print(f"Generating {n_merchants} merchants and their competitors...")
+    """Generate merchant data in chunks."""
+    print(f"Generating {n_merchants} merchants...")
     
-    # Initialize counters and file paths
-    comp_counter = 10000
+    # Initialize file path
     merchants_file = DATA_DIR / 'merchants.csv'
-    competitors_file = DATA_DIR / 'competitors.csv'
     
-    # Clear existing files
-    for file in [merchants_file, competitors_file]:
-        if file.exists():
-            file.unlink()
+    # Clear existing file
+    if merchants_file.exists():
+        merchants_file.unlink()
     
     # Generate data in chunks
     for start_idx in tqdm(range(0, n_merchants, CHUNK_SIZE)):
@@ -113,20 +83,15 @@ def generate_data(n_merchants=100000):
         # Generate merchant chunk
         merchant_chunk = generate_merchant_chunk(start_idx, chunk_size)
         
-        # Generate competitor chunk
-        competitor_chunk, comp_counter = generate_competitor_chunk(merchant_chunk, comp_counter)
-        
-        # Save chunks to CSV
+        # Save chunk to CSV
         merchant_chunk.to_csv(merchants_file, mode='a', header=not merchants_file.exists(), index=False)
-        competitor_chunk.to_csv(competitors_file, mode='a', header=not competitors_file.exists(), index=False)
         
         # Clear memory
         del merchant_chunk
-        del competitor_chunk
     
     print("Data generation complete!")
     print(f"Merchants saved to: {merchants_file}")
-    print(f"Competitors saved to: {competitors_file}")
+    print(f"Total merchants generated: {n_merchants}")
 
 if __name__ == "__main__":
     generate_data()
