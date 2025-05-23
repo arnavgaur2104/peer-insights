@@ -130,6 +130,26 @@ st.markdown("""
         border-color: #404040 transparent transparent transparent;
         z-index: 1000;
     }
+
+    /* Performance insight styles */
+    .performance-insight {
+        margin-top: 10px;
+        padding: 10px;
+        border-left: 3px solid #e67700;
+        background-color: rgba(230, 119, 0, 0.1);
+        border-radius: 0 4px 4px 0;
+    }
+    .insight-title {
+        color: #e67700;
+        font-weight: 700;
+        font-size: 0.9em;
+        margin-bottom: 8px;
+    }
+    .insight-content {
+        color: #e0e0e0;
+        font-size: 0.85em;
+        line-height: 1.5;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -165,6 +185,221 @@ def load_data():
 # --- Call Load Data Function ---
 # Call the function after defining it and after set_page_config
 merchants, competitors = load_data()
+
+def get_performance_insights(metric, merchant_value, avg_value, performance_status, industry, store_type):
+    """Generate actionable insights for below-average performance metrics."""
+    insights = []
+    
+    # Only provide insights for below-average performance
+    if "❌" not in performance_status:
+        return insights
+    
+    # Calculate performance gap for contextualized advice
+    gap_pct = abs((merchant_value - avg_value) / avg_value * 100)
+    is_large_gap = gap_pct > 20  # Significant underperformance
+    is_small_gap = gap_pct < 10  # Minor underperformance
+    
+    metric_lower = metric.lower()
+    
+    if "avg txn value" in metric_lower:
+        # Store type specific recommendations for transaction value
+        if store_type == "Mall":
+            if industry == "Restaurant":
+                insights = [
+                    "💡 Leverage Mall Footfall for Higher Orders",
+                    "• Create mall-exclusive combo meals and family portions",
+                    "• Partner with cinema/shops for meal + entertainment packages", 
+                    "• Use digital menu boards to showcase premium options",
+                    "• Target families with shareable platters and desserts"
+                ]
+            elif industry == "Retail":
+                insights = [
+                    "💡 Maximize Mall Shopping Experience",
+                    "• Create attractive window displays with premium products",
+                    "• Bundle trending items for mall shoppers",
+                    "• Offer 'mall exclusive' product collections",
+                    "• Use mall events to showcase higher-value items"
+                ]
+            elif industry == "Fashion":
+                insights = [
+                    "💡 Position as Premium Mall Destination",
+                    "• Curate exclusive collections for mall demographics",
+                    "• Create complete outfit displays in windows",
+                    "• Offer personal styling services for mall shoppers",
+                    "• Partner with other mall stores for cross-promotions"
+                ]
+        
+        elif store_type == "Street Front":
+            if industry == "Restaurant":
+                insights = [
+                    "💡 Build Neighborhood Value Perception",
+                    "• Introduce 'chef's special' higher-value dishes",
+                    "• Create loyalty programs for repeat customers",
+                    "• Offer home delivery with minimum order values",
+                    "• Add beverages and sides to increase average order"
+                ]
+            elif industry == "Retail":
+                insights = [
+                    "💡 Become the Go-To Local Store",
+                    "• Stock premium local and organic products",
+                    "• Create convenience bundles (breakfast, dinner kits)",
+                    "• Offer credit facilities for regular customers",
+                    "• Focus on quality over quantity positioning"
+                ]
+            elif industry == "Fashion":
+                insights = [
+                    "💡 Establish Local Fashion Authority",
+                    "• Curate trending styles for local demographics",
+                    "• Offer alteration services to justify higher prices",
+                    "• Create seasonal collections for local events",
+                    "• Build relationships with local influencers"
+                ]
+        
+        elif store_type == "Standalone":
+            if industry == "Restaurant":
+                insights = [
+                    "💡 Create Destination Dining Experience",
+                    "• Develop signature dishes to justify premium pricing",
+                    "• Create ambiance that supports higher ticket sizes",
+                    "• Offer special occasion packages and catering",
+                    "• Build reputation through food quality and service"
+                ]
+            elif industry == "Retail":
+                insights = [
+                    "💡 Differentiate Through Specialization",
+                    "• Focus on niche, high-quality product categories",
+                    "• Offer expert consultation and recommendations",
+                    "• Create bulk buying options for families",
+                    "• Position as premium alternative to chain stores"
+                ]
+            elif industry == "Fashion":
+                insights = [
+                    "💡 Build Boutique Brand Identity",
+                    "• Curate unique, hard-to-find fashion pieces",
+                    "• Offer personalized styling and fitting services",
+                    "• Create exclusive collections or designer partnerships",
+                    "• Focus on quality and craftsmanship messaging"
+                ]
+                
+    elif "daily txn count" in metric_lower:
+        # Store type specific recommendations for customer count
+        if store_type == "Mall":
+            if industry == "Restaurant":
+                insights = [
+                    "🎯 Capture Mall Traffic Effectively",
+                    "• Position staff at entrance during peak mall hours",
+                    "• Create quick-service options for busy shoppers",
+                    "• Offer mall walker discounts during off-peak hours",
+                    "• Partner with movie theaters for pre/post show meals"
+                ]
+            elif industry == "Retail":
+                insights = [
+                    "🎯 Maximize Mall Visibility",
+                    "• Create eye-catching storefront displays",
+                    "• Participate in mall-wide sales and events",
+                    "• Offer exclusive mall shopper discounts",
+                    "• Use digital signage to attract passing shoppers"
+                ]
+            elif industry == "Fashion":
+                insights = [
+                    "🎯 Attract Mall Fashion Shoppers",
+                    "• Create seasonal window displays with trending styles",
+                    "• Offer styling sessions during peak mall hours",
+                    "• Partner with beauty salons for complete makeovers",
+                    "• Host mini fashion shows during mall events"
+                ]
+                
+        elif store_type == "Street Front":
+            if industry == "Restaurant":
+                insights = [
+                    "🎯 Become the Neighborhood Favorite",
+                    "• Offer breakfast and tea service for morning commuters",
+                    "• Create loyalty programs for office workers nearby",
+                    "• Extend operating hours to capture dinner crowd",
+                    "• Use social media to announce daily specials"
+                ]
+            elif industry == "Retail":
+                insights = [
+                    "🎯 Increase Local Foot Traffic",
+                    "• Improve street-facing signage and visibility",
+                    "• Stock daily essentials to encourage frequent visits",
+                    "• Create seasonal promotional displays",
+                    "• Build relationships with nearby office/residential areas"
+                ]
+            elif industry == "Fashion":
+                insights = [
+                    "🎯 Build Local Fashion Community",
+                    "• Host neighborhood fashion events and trunk shows",
+                    "• Create referral programs for existing customers",
+                    "• Offer home delivery for busy local customers",
+                    "• Partner with local gyms, salons for cross-promotion"
+                ]
+                
+        elif store_type == "Standalone":
+            if industry == "Restaurant":
+                insights = [
+                    "🎯 Drive Destination Traffic",
+                    "• Invest in online presence and food delivery apps",
+                    "• Create social media buzz with food photography",
+                    "• Offer catering services to local businesses/events",
+                    "• Build word-of-mouth through exceptional service"
+                ]
+            elif industry == "Retail":
+                insights = [
+                    "🎯 Expand Customer Reach",
+                    "• Develop online presence for product discovery",
+                    "• Offer home delivery for bulk purchases",
+                    "• Create customer referral incentive programs",
+                    "• Partner with local businesses for B2B sales"
+                ]
+            elif industry == "Fashion":
+                insights = [
+                    "🎯 Build Fashion Destination Appeal",
+                    "• Develop strong social media presence with styling tips",
+                    "• Offer appointment-based personal shopping",
+                    "• Create email newsletters with fashion trends",
+                    "• Host exclusive preview events for new collections"
+                ]
+            
+    elif "refund rate" in metric_lower:
+        # Store type specific recommendations for refund rate
+        if store_type == "Mall":
+            insights = [
+                "⚠️ Maintain Mall Standards",
+                "• Implement quality checks before displaying products",
+                "• Train staff on product knowledge for better recommendations",
+                "• Create clear size/fit guides for customer education",
+                "• Offer exchange policies instead of full refunds when possible"
+            ]
+        elif store_type == "Street Front":
+            insights = [
+                "⚠️ Build Local Trust and Reliability",
+                "• Focus on product quality over variety",
+                "• Offer trial periods for regular customers",
+                "• Provide detailed product demonstrations",
+                "• Build personal relationships to understand customer needs"
+            ]
+        elif store_type == "Standalone":
+            insights = [
+                "⚠️ Ensure Premium Quality Standards",
+                "• Implement strict quality control processes",
+                "• Offer detailed consultations before purchase",
+                "• Provide comprehensive after-sales support",
+                "• Create customer feedback systems for continuous improvement"
+            ]
+    
+    # Add performance gap specific advice
+    if is_large_gap:
+        if store_type == "Mall":
+            insights.append("• Consider immediate staff training and process review")
+        elif store_type == "Street Front":
+            insights.append("• Focus on building stronger customer relationships")
+        else:  # Standalone
+            insights.append("• Reassess positioning and target customer strategy")
+    elif is_small_gap:
+        insights.append("• Small adjustments can close this gap quickly")
+    
+    return insights
 
 # --- Start Building the UI ---
 st.title("🧠 AI-Powered Merchant Insights")
@@ -526,6 +761,8 @@ if merchant_id:
                 if comparison_df_local is not None:
                     for _, row in comparison_df_local.iterrows():
                         status_class = "status-good" if "✅" in str(row['Performance']) else "status-warning" if "⚠️" in str(row['Performance']) else "status-bad"
+                        
+                        # Display performance section
                         st.markdown(f"""
                         <div class="performance-section">
                             <div class="performance-title">{row['Metric']}</div>
@@ -545,12 +782,37 @@ if merchant_id:
                             </div>
                         </div>
                         """, unsafe_allow_html=True)
+                        
+                        # Display insights separately using Streamlit components
+                        insights = get_performance_insights(
+                            row['Metric'], 
+                            row['Merchant Value'], 
+                            row['Local Avg'], 
+                            row['Performance'],
+                            merchant_row.get('industry', ''),
+                            merchant_row.get('store_type', '')
+                        )
+                        
+                        if insights:
+                            st.markdown(f"""
+                            <div class="performance-insight">
+                                <div class="insight-title">{insights[0]}</div>
+                                <div class="insight-content">
+                            """, unsafe_allow_html=True)
+                            
+                            # Display each insight item as a separate line
+                            for insight_item in insights[1:]:
+                                st.markdown(f"<div style='color: #e0e0e0; font-size: 0.85em; margin: 2px 0;'>{insight_item}</div>", unsafe_allow_html=True)
+                            
+                            st.markdown("</div></div>", unsafe_allow_html=True)
 
             with col2:
                 st.markdown("### Cluster Comparison")
                 if comparison_df_cluster is not None:
                     for _, row in comparison_df_cluster.iterrows():
                         status_class = "status-good" if "✅" in str(row['Performance']) else "status-warning" if "⚠️" in str(row['Performance']) else "status-bad"
+                        
+                        # Display performance section
                         st.markdown(f"""
                         <div class="performance-section">
                             <div class="performance-title">{row['Metric']}</div>
@@ -570,6 +832,29 @@ if merchant_id:
                             </div>
                         </div>
                         """, unsafe_allow_html=True)
+                        
+                        # Display insights separately using Streamlit components
+                        insights = get_performance_insights(
+                            row['Metric'], 
+                            row['Merchant Value'], 
+                            row['Cluster Avg'], 
+                            row['Performance'],
+                            merchant_row.get('industry', ''),
+                            merchant_row.get('store_type', '')
+                        )
+                        
+                        if insights:
+                            st.markdown(f"""
+                            <div class="performance-insight">
+                                <div class="insight-title">{insights[0]}</div>
+                                <div class="insight-content">
+                            """, unsafe_allow_html=True)
+                            
+                            # Display each insight item as a separate line
+                            for insight_item in insights[1:]:
+                                st.markdown(f"<div style='color: #e0e0e0; font-size: 0.85em; margin: 2px 0;'>{insight_item}</div>", unsafe_allow_html=True)
+                            
+                            st.markdown("</div></div>", unsafe_allow_html=True)
 
         with tab3:
             # Detailed Information
