@@ -37,12 +37,86 @@ pip install -r requirements.txt
 ```
 
 4. Set up Google API key:
-   - Get a Google API key for Gemini AI
+   
+   **Option 1: Using Environment Variable (Recommended)**
+   - Get a Google API key for Gemini AI (see detailed steps below)
+   - Set the environment variable:
+     ```bash
+     # On macOS/Linux:
+     export GOOGLE_API_KEY="your-api-key-here"
+     
+     # On Windows:
+     set GOOGLE_API_KEY=your-api-key-here
+     ```
+   
+   **Option 2: Using Streamlit Secrets**
    - Create a `.streamlit/secrets.toml` file in the project root
    - Add your API key:
-   ```toml
-   GOOGLE_API_KEY = "your-api-key-here"
+     ```toml
+     GOOGLE_API_KEY = "your-api-key-here"
+     ```
+
+## Google API Key Setup (Detailed Steps)
+
+### Step 1: Create a Google Cloud Project
+1. Go to [Google Cloud Console](https://console.cloud.google.com/)
+2. Sign in with your Google account
+3. Click "Create Project" or select an existing project
+4. Give your project a name (e.g., "merchant-insights")
+5. Click "Create"
+
+### Step 2: Enable the Gemini API
+1. In the Google Cloud Console, go to "APIs & Services" > "Library"
+2. Search for "Generative Language API" or "Gemini API"
+3. Click on the API and select "Enable"
+4. Wait for the API to be enabled
+
+### Step 3: Create API Credentials
+1. Go to "APIs & Services" > "Credentials"
+2. Click "Create Credentials" > "API Key"
+3. Copy the generated API key
+4. (Optional but recommended) Click "Restrict Key" to add restrictions:
+   - Under "API restrictions", select "Restrict key"
+   - Choose "Generative Language API" from the list
+   - Click "Save"
+
+### Step 4: Set Up the API Key in Your Project
+Choose one of the following methods:
+
+**Method 1: Environment Variable (Recommended for development)**
+```bash
+# Add to your shell profile (~/.bashrc, ~/.zshrc, etc.)
+export GOOGLE_API_KEY="AIzaSyBzbDCXwtfttdY5KHU3Z4bN-CQFKTRCPD4"
+
+# Reload your shell configuration
+source ~/.zshrc  # For zsh users
+# OR
+source ~/.bashrc  # For bash users
+
+# Or set temporarily for current session:
+export GOOGLE_API_KEY="your-actual-api-key-here"
+```
+
+**Method 2: Streamlit Secrets (Good for deployment)**
+1. Create a `.streamlit` directory in your project root
+2. Create a `secrets.toml` file inside it:
+```toml
+GOOGLE_API_KEY = "your-actual-api-key-here"
+```
+
+### Step 5: Verify Setup
+1. Start the application:
+   ```bash
+   streamlit run streamlit_app.py
    ```
+2. Select a merchant and try generating insights
+3. If you see "Google API Key not configured" error, double-check your setup
+
+### API Key Security Tips
+- ⚠️ **Never commit your API key to version control**
+- 🔒 Add `.streamlit/secrets.toml` to your `.gitignore` file
+- 🔄 Rotate your API key regularly
+- 📊 Monitor your API usage in Google Cloud Console
 
 ## Running the Application
 

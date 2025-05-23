@@ -5,16 +5,44 @@ import traceback
 import re
 import streamlit as st
 import google.generativeai as genai
+import os
 
 # --- Configure Gemini API ---
-try:
-    GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
-    genai.configure(api_key=GOOGLE_API_KEY)
-    print("Gemini API Configured successfully.")
-    _gemini_api_configured = True
-except Exception as e:
-    print(f"Error configuring Gemini API: {e}")
-    _gemini_api_configured = False
+
+@st.cache_data(ttl=3600)  # Cache for 1 hour
+def call_gemini_api(prompt, model_name="gemini-1.5-flash"):
+    """Calls the configured Google Generative AI model (Gemini)."""
+    
+    # Configure API fresh each time
+    try:
+        # Try environment variable first
+        api_key = os.getenv("GOOGLE_API_KEY")
+        
+        if not api_key:
+            # Fallback to Streamlit secrets if available
+            try:
+                if hasattr(st, 'secrets') and 'GOOGLE_API_KEY' in st.secrets:
+                    api_key = st.secrets["GOOGLE_API_KEY"]
+            except Exception:
+                pass
+        
+        if not api_key or not api_key.strip():
+            return "### AI Analysis Error:\nGoogle API Key not configured. Please set GOOGLE_API_KEY environment variable."
+        
+        # Configure the API
+        genai.configure(api_key=api_key.strip())
+        
+        # Create model and generate response
+        model = genai.GenerativeModel(model_name)
+        response = model.generate_content(prompt)
+        
+        if response.parts:
+            return response.text
+        else:
+            return "### AI Analysis Error:\nNo response generated from the AI model."
+            
+    except Exception as e:
+        return f"### AI Analysis Error:\nAn error occurred: {str(e)}"
 
 def calculate_metric_impact(metric, merchant_value, avg_value):
     """Calculate the impact score for a metric."""
@@ -41,24 +69,6 @@ def format_metric_comparison(metric, merchant_value, avg_value, pct_diff, is_bet
         return f"{merchant_value*100:.1f}% vs {avg_value*100:.1f}% ({pct_diff:+.1f}%)"
     return f"{merchant_value:.2f} vs {avg_value:.2f} ({pct_diff:+.1f}%)"
 
-@st.cache_data(ttl=3600)  # Cache for 1 hour
-def call_gemini_api(prompt, model_name="gemini-1.5-flash"):
-    """Calls the configured Google Generative AI model (Gemini)."""
-    if not _gemini_api_configured:
-        return "### AI Analysis Error:\nGoogle API Key not configured or configuration failed."
-
-    try:
-        model = genai.GenerativeModel(model_name)
-        response = model.generate_content(prompt)
-        
-        if response.parts:
-            return response.text
-        else:
-            return "### AI Analysis Error:\nNo response generated from the AI model."
-            
-    except Exception as e:
-        return f"### AI Analysis Error:\nAn error occurred: {str(e)}"
-
 def generate_impact_visualization(merchant_row, comparison_local, comparison_cluster, response=None):
     """Generate data for impact visualization."""
     if comparison_local is None:
@@ -66,91 +76,90 @@ def generate_impact_visualization(merchant_row, comparison_local, comparison_clu
 
     impact_data = []
     
-    # Split insights into individual blocks
-    insights = response.strip().split('\n\n')
+    # Split insights into individual blocks using the same logic as format_insights_for_display
+    raw_insights = response.strip().split('\n\n')
     
-    for i, insight_block in enumerate(insights):
-        if not insight_block.strip():
+    # Filter insights the same way as format_insights_for_display
+    cleaned_insights = []
+    for insight in raw_insights:
+        insight = insight.strip()
+        if not insight:  # Skip empty
             continue
-            
+        if len(insight) <= 3 and insight in ['💪', '🎯', '⚠️']:  # Skip standalone emojis
+            continue
+        if len(insight.split('\n')) >= 2:  # Only include multi-line insights
+            cleaned_insights.append(insight)
+    
+    # Process each cleaned insight
+    for insight_index, insight_block in enumerate(cleaned_insights):
         lines = insight_block.strip().split('\n')
-        if len(lines) < 3:
+        if len(lines) < 2:  # Need at least 2 lines
             continue
             
         # Extract metric and impact percentage
         metric = None
         impact_pct = None
         
-        # Determine metric from the first line using comprehensive detection
-        insight_text = lines[0].lower()
-        if 'transaction value' in insight_text or 'avg' in insight_text or 'value' in insight_text:
+        # Detect which metric this insight is about
+        insight_text = insight_block.lower()
+        if '💪' in insight_block and 'avg' in insight_text:
             metric = 'Avg Txn Value'
-        elif 'repeat' in insight_text or 'customer rate' in insight_text or 'retention' in insight_text:
-            metric = 'Repeat Customer Rate'
-        elif 'daily count' in insight_text:
-            metric = 'Daily Txn Count (Count)'
-        elif 'daily txns' in insight_text:
-            metric = 'Daily Txn Count (Txns)'
-        elif 'daily' in insight_text or 'count' in insight_text or 'transaction' in insight_text or 'customers' in insight_text:
+        elif ('🎯' in insight_block or '💡' in insight_block) and 'daily' in insight_text:
             metric = 'Daily Txn Count'
-        elif 'refund' in insight_text and 'rate' in insight_text:
+        elif ('🎯' in insight_block or '💡' in insight_block) and 'repeat' in insight_text:
+            metric = 'Repeat Customer Rate'
+        elif ('⚠️' in insight_block) and 'refund' in insight_text:
             metric = 'Refund Rate'
-        elif 'income' in insight_text or 'level' in insight_text:
-            metric = 'Income Level'
-            
-        # Extract impact percentage from the last line
-        if '📈 IMPACT:' in lines[2]:
-            match = re.search(r'(\d+)%', lines[2])
-            if match:
-                impact_pct = float(match.group(1)) / 100
-                
-        if metric and impact_pct is not None:
-            # Map the detected metric to comparison dataframe metric names
-            metric_mapping = {
-                'Avg Txn Value': 'Avg Txn Value',
-                'Daily Txn Count': 'Daily Txn Count',
-                'Daily Txn Count (Count)': 'Daily Txn Count',
-                'Daily Txn Count (Txns)': 'Daily Txn Count',
-                'Refund Rate': 'Refund Rate',
-                'Repeat Customer Rate': 'Repeat Customer Rate',
-                'Income Level': 'Income Level'
-            }
-            
-            comparison_metric = metric_mapping.get(metric, 'Daily Txn Count')
-            
-            # Get current and local average values using the specific metric's raw values
-            local_row = comparison_local[comparison_local['Metric'] == comparison_metric]
-            if not local_row.empty:
-                current_value = local_row.iloc[0]['Merchant Raw']
-                local_avg = local_row.iloc[0]['Local Raw']
-                
-                # Get cluster average if available
-                cluster_avg = None
-                if comparison_cluster is not None:
-                    cluster_row = comparison_cluster[comparison_cluster['Metric'] == comparison_metric]
-                    if not cluster_row.empty:
-                        cluster_avg = cluster_row.iloc[0]['Cluster Raw']
-                
-                # Calculate expected value based on impact
-                if metric == 'Income Level':
-                    expected_value = current_value
-                elif metric in ['Avg Txn Value', 'Daily Txn Count', 'Daily Txn Count (Count)', 'Daily Txn Count (Txns)', 'Repeat Customer Rate']:
-                    expected_value = current_value * (1 + impact_pct)  # Higher is better
-                elif metric in ['Refund Rate']:
-                    expected_value = current_value * (1 - impact_pct)  # Lower is better
-                else:
-                    # Default to increase for unknown metrics
-                    expected_value = current_value * (1 + impact_pct)
-                
-                impact_data.append({
-                    'metric': metric,
-                    'current': current_value,
-                    'expected': expected_value,
-                    'local_avg': local_avg,
-                    'cluster_avg': cluster_avg,
-                    'impact_pct': impact_pct,
-                    'insight_index': i  # Add index for unique identification
-                })
+        
+        if not metric:
+            continue
+        
+        # Extract impact percentage from any line that contains 'IMPACT:'
+        for line in lines:
+            if '📈 IMPACT:' in line:
+                # Extract percentage using regex
+                import re
+                percentage_match = re.search(r'(\d+(?:\.\d+)?)%', line)
+                if percentage_match:
+                    impact_pct = float(percentage_match.group(1)) / 100.0
+                break
+        
+        if impact_pct is None:
+            continue
+        
+        # Find corresponding metric in comparison data
+        metric_row = comparison_local[comparison_local['Metric'] == metric]
+        if metric_row.empty:
+            continue
+        
+        metric_data = metric_row.iloc[0]
+        current_value = metric_data['Merchant Raw']
+        local_avg = metric_data['Local Raw']
+        
+        # Calculate expected value after improvement
+        if metric == 'Refund Rate':
+            # For refund rate, improvement means reduction
+            expected_value = current_value * (1 - impact_pct)
+        else:
+            # For other metrics, improvement means increase
+            expected_value = current_value * (1 + impact_pct)
+        
+        # Get cluster average if available
+        cluster_avg = None
+        if comparison_cluster is not None:
+            cluster_metric_row = comparison_cluster[comparison_cluster['Metric'] == metric]
+            if not cluster_metric_row.empty:
+                cluster_avg = cluster_metric_row.iloc[0]['Cluster Raw']
+        
+        impact_data.append({
+            'metric': metric,
+            'insight_index': insight_index,
+            'current': current_value,
+            'expected': expected_value,
+            'local_avg': local_avg,
+            'cluster_avg': cluster_avg,
+            'impact_pct': impact_pct
+        })
     
     return impact_data
 
@@ -277,13 +286,19 @@ Make it super concise and actionable and personalized for each merchant's demogr
     try:
         # Call Gemini API
         raw_response = call_gemini_api(prompt)
-        print(raw_response)
         response = reformat_insights_multiline(raw_response)
         
-        # Generate impact visualization data with the extracted insights
+        # Generate impact visualization data BEFORE adding links (so parsing works correctly)
         impact_data = generate_impact_visualization(merchant_row, comparison_local, comparison_cluster, response)
         
-        return response, impact_data
+        # Enhance insights with actionable links AFTER generating impact data
+        enhanced_response = enhance_insights_with_links(
+            response, 
+            merchant_row.get('industry', ''), 
+            merchant_row.get('store_type', '')
+        )
+        
+        return enhanced_response, impact_data
     except Exception as e:
         return f"Error generating insights: {str(e)}", None
 
@@ -477,46 +492,556 @@ def reformat_insights_multiline(insight_text):
 
 def format_insights_for_display(insights_text, impact_data=None):
     """Format insights with proper spacing and line breaks for Streamlit display."""
-    # Split into individual insights
-    insights = insights_text.strip().split('\n\n')
+    if not insights_text:
+        return []
+    
+    # Split insights using double newlines first, then clean up
+    raw_insights = insights_text.split('\n\n')
+    
+    # Filter and clean insights
+    cleaned_insights = []
+    for insight in raw_insights:
+        insight = insight.strip()
+        if not insight:  # Skip empty
+            continue
+        if len(insight) <= 3 and insight in ['💪', '🎯', '⚠️']:  # Skip standalone emojis
+            continue
+        if len(insight.split('\n')) >= 2:  # Only include multi-line insights
+            cleaned_insights.append(insight)
+    
+    # Format each insight for HTML display with proper styling
     formatted_insights = []
     
-    for i, insight in enumerate(insights):
-        if not insight.strip():
-            continue
+    for insight_index, insight in enumerate(cleaned_insights):
+        # Split insight into lines for processing
+        lines = insight.split('\n')
+        formatted_lines = []
+        
+        for line in lines:
+            line = line.strip()
+            if not line:  # Skip empty lines
+                continue
             
-        # Split the insight into lines
-        lines = insight.strip().split('\n')
-        if len(lines) >= 3:  # Ensure we have all three parts
-            # Get the metric from the insight
-            metric = None
-            insight_text = lines[0].lower()
-            
-            # More comprehensive metric detection with unique identifiers
-            if 'transaction value' in insight_text or 'avg' in insight_text or 'value' in insight_text:
-                metric = 'Avg Txn Value'
-            elif 'repeat' in insight_text or 'customer rate' in insight_text or 'retention' in insight_text:
-                metric = 'Repeat Customer Rate'
-            elif 'daily count' in insight_text:
-                metric = 'Daily Txn Count (Count)'
-            elif 'daily txns' in insight_text:
-                metric = 'Daily Txn Count (Txns)'
-            elif 'daily' in insight_text or 'count' in insight_text or 'transaction' in insight_text or 'customers' in insight_text:
-                metric = 'Daily Txn Count'
-            elif 'refund' in insight_text and 'rate' in insight_text:
-                metric = 'Refund Rate'
-            elif 'income' in insight_text or 'level' in insight_text:
-                metric = 'Income Level'
-            
-            # Only add to formatted insights if we found a metric
-            if metric:
-                formatted_insight = f"""
-                <div style='margin: 10px 0; padding: 15px; border-radius: 8px; border: 1px solid #4dabf7; background: transparent;'>
-                    <p style='margin: 5px 0; color: #e0e0e0;'>{lines[0]}</p>
-                    <p style='margin: 5px 0; color: #e0e0e0;'>{lines[1]}</p>
-                    <p style='margin: 5px 0; color: #e0e0e0;'>{lines[2]}</p>
-                </div>
-                """
-                formatted_insights.append((formatted_insight, metric, i))  # Add index for unique key
+            # Check if line contains HTML tags (links)
+            if '<a href=' in line or '<span style=' in line:
+                # Preserve HTML lines as-is
+                formatted_lines.append(line)
+            else:
+                # Wrap regular text lines in paragraph tags
+                formatted_lines.append(f"<p style='margin: 5px 0; color: #e0e0e0;'>{line}</p>")
+        
+        # Join all lines and wrap in styled container
+        insight_content = '\n'.join(formatted_lines)
+        
+        # Wrap the entire insight in a styled container
+        formatted_insight = f"""
+        <div style='margin: 10px 0; padding: 15px; border-radius: 8px; border: 1px solid #4dabf7; background: transparent;'>
+            {insight_content}
+        </div>
+        """
+        
+        # Extract metric and insight index for impact data matching
+        metric = None
+        if '💪' in insight and 'avg' in insight.lower():
+            metric = 'Avg Txn Value'
+        elif ('🎯' in insight or '💡' in insight) and 'daily' in insight.lower():
+            metric = 'Daily Txn Count'
+        elif ('🎯' in insight or '💡' in insight) and 'repeat' in insight.lower():
+            metric = 'Repeat Customer Rate'
+        elif ('⚠️' in insight) and 'refund' in insight.lower():
+            metric = 'Refund Rate'
+        
+        formatted_insights.append((formatted_insight, metric, insight_index))
     
     return formatted_insights
+
+def get_link_relevance_explanation(action_text, links_provided, industry, store_type):
+    """
+    Explain why the provided links are relevant to the specific action.
+    """
+    action_lower = action_text.lower()
+    explanations = []
+    
+    # Explain relevance based on action type
+    if any(keyword in action_lower for keyword in ['pos', 'payment', 'digital', 'qr']):
+        explanations.append("💳 These payment solutions help streamline transactions and reduce checkout friction")
+    
+    if any(keyword in action_lower for keyword in ['online', 'delivery', 'ordering']):
+        explanations.append("🚀 Online platforms expand your reach beyond physical footfall")
+        if industry == 'Restaurant':
+            explanations.append("🍽️ Food delivery platforms can increase daily transaction count by 40-60%")
+    
+    if any(keyword in action_lower for keyword in ['marketing', 'promote', 'advertise']):
+        explanations.append("📈 Digital marketing tools help attract new customers and increase visibility")
+        explanations.append("🎯 Google My Business alone can increase foot traffic by 20-30%")
+    
+    if any(keyword in action_lower for keyword in ['loyalty', 'reward', 'retention']):
+        explanations.append("🔄 Customer retention tools can increase repeat purchase rate by 25-50%")
+        explanations.append("💰 Acquiring new customers costs 5x more than retaining existing ones")
+    
+    if any(keyword in action_lower for keyword in ['combo', 'bundle', 'package']):
+        explanations.append("📦 Bundling strategies can increase average transaction value by 15-25%")
+    
+    if any(keyword in action_lower for keyword in ['inventory', 'analytics', 'system']):
+        explanations.append("📊 Business analytics help identify patterns and optimize operations")
+    
+    if any(keyword in action_lower for keyword in ['credit', 'loan', 'capital']):
+        explanations.append("💵 Access to capital helps implement growth strategies faster")
+        explanations.append("⚡ Razorpay Capital offers instant business loans based on your transaction history")
+    
+    # Store type specific relevance
+    if store_type == 'Mall':
+        explanations.append("🏬 Mall-specific tools help leverage high footfall and premium positioning")
+    elif store_type == 'Street Front':
+        explanations.append("🛣️ Local business tools help establish neighborhood presence and community relationships")
+    elif store_type == 'Standalone':
+        explanations.append("🏪 Independent business tools help compete with chains through digital presence")
+    
+    return explanations
+
+def get_actionable_links(action_text, industry, store_type):
+    """
+    Map specific action items to directly relevant business links.
+    Returns enhanced action text with embedded links that directly support the suggested action.
+    """
+    action_lower = action_text.lower()
+    
+    # Direct action-to-solution mapping
+    action_links = {}
+    
+    # COMBO MEALS & BUNDLING ACTIONS
+    if any(phrase in action_lower for phrase in ['combo', 'bundle', 'package', 'meal', 'deal', 'offer']):
+        if industry == 'Restaurant':
+            action_links['Menu Design Tools'] = {
+                'url': 'https://www.canva.com/create/menus/',
+                'benefit': 'Create attractive combo menu displays that make customers order 30% more combo meals'
+            }
+            action_links['Food Photography'] = {
+                'url': 'https://www.zomato.com/business/photo-shoot',
+                'benefit': 'Professional combo photos increase online orders by 60% - customers order what looks appetizing'
+            }
+            action_links['POS Systems'] = {
+                'url': 'https://www.petpooja.com/',
+                'benefit': 'Auto-suggest combos at checkout - staff can upsell 40% more effectively'
+            }
+    
+    # LOYALTY PROGRAM ACTIONS
+    if any(phrase in action_lower for phrase in ['loyalty', 'repeat', 'retention', 'customer', 'return']):
+        if industry == 'Restaurant':
+            action_links['WhatsApp Business'] = {
+                'url': 'https://business.whatsapp.com/',
+                'benefit': 'Send "Miss you!" messages to inactive customers - brings back 30% within a week'
+            }
+            action_links['Customer Database'] = {
+                'url': 'https://www.zoho.com/crm/',
+                'benefit': 'Remember customer preferences so you can send personalized offers like "Your favorite kurta style is back in stock!"'
+            }
+            action_links['Restaurant Loyalty'] = {
+                'url': 'https://www.toast.com/products/loyalty',
+                'benefit': 'Track "Buy 5 meals, get 6th free" automatically - customers visit 40% more often'
+            }
+        elif industry == 'Fashion':
+            action_links['WhatsApp Business'] = {
+                'url': 'https://business.whatsapp.com/',
+                'benefit': 'Send personalized style updates - "Your size in the dress you liked is back!" doubles return visits'
+            }
+            action_links['Customer Database'] = {
+                'url': 'https://www.zoho.com/crm/',
+                'benefit': 'Track style preferences - "Customers who bought kurtas also love these dupattas" increases sales by 35%'
+            }
+            action_links['Fashion Loyalty'] = {
+                'url': 'https://www.limeroad.com/business',
+                'benefit': 'Points for every purchase - "You are 200 points away from 20% off!" keeps customers engaged'
+            }
+            action_links['Style Rewards'] = {
+                'url': 'https://razorpay.com/magic-checkout/',
+                'benefit': 'Create smooth, fast checkout experience that makes loyal customers want to return'
+            }
+        elif industry == 'Retail':
+            action_links['WhatsApp Business'] = {
+                'url': 'https://business.whatsapp.com/',
+                'benefit': 'Remind about expiring products - "Your usual cooking oil is running low?" increases frequency by 25%'
+            }
+            action_links['Customer Database'] = {
+                'url': 'https://www.zoho.com/crm/',
+                'benefit': 'Track buying patterns - "Monthly grocery reminder" brings customers back on schedule'
+            }
+            action_links['Retail Loyalty'] = {
+                'url': 'https://www.loyverse.com/',
+                'benefit': 'Automatic discounts for bulk buyers - "Buy 5 items, get 10% off" increases basket size by 45%'
+            }
+    
+    # DELIVERY & ONLINE ACTIONS
+    if any(phrase in action_lower for phrase in ['delivery', 'online', 'zomato', 'swiggy', 'digital']):
+        if industry == 'Restaurant':
+            action_links['Zomato Partner'] = {
+                'url': 'https://www.zomato.com/business',
+                'benefit': 'Get 50+ daily orders within first month - delivery customers order 20% more than walk-ins'
+            }
+            action_links['Swiggy Partner'] = {
+                'url': 'https://partner.swiggy.com/',
+                'benefit': 'Dual platform presence increases delivery orders by 80% - more hungry customers find you'
+            }
+            action_links['Payment Links'] = {
+                'url': 'https://razorpay.com/payment-links/',
+                'benefit': 'Send payment links for pre-orders - "Pay now, pick up in 20 mins" reduces wait time complaints'
+            }
+    
+    # MARKETING & PROMOTION ACTIONS
+    if any(phrase in action_lower for phrase in ['marketing', 'promotion', 'advertise', 'social', 'google']):
+        action_links['Google My Business'] = {
+            'url': 'https://business.google.com/',
+            'benefit': 'Free Google listing brings 40% more walk-ins - customers search "restaurants near me" and find you first'
+        }
+        action_links['Facebook Business'] = {
+            'url': 'https://business.facebook.com/',
+            'benefit': 'Post daily specials to 500+ local followers - "Today only: Biryani + Raita for ₹199!" increases sales by 25%'
+        }
+        action_links['Instagram Business'] = {
+            'url': 'https://business.instagram.com/',
+            'benefit': 'Food photos get 60% more engagement - customers tag friends and bring groups, increasing table size'
+        }
+    
+    # STAFF & TRAINING ACTIONS
+    if any(phrase in action_lower for phrase in ['staff', 'training', 'service', 'upsell']):
+        action_links['Staff Training Videos'] = {
+            'url': 'https://www.youtube.com/playlist?list=PLrAXtmRdnEQdvF9OGAXZSGsN_bG6Mk8PD',
+            'benefit': 'Trained staff suggest "Would you like fries with that?" - increases average order value by 15-20%'
+        }
+        action_links['Upselling Techniques'] = {
+            'url': 'https://blog.hubspot.com/service/upselling-techniques',
+            'benefit': 'Learn 5 phrases that double dessert sales - "Save room for our signature chocolate cake!"'
+        }
+    
+    # If no links found, return original text
+    if not action_links:
+        return action_text
+    
+    # Create enhanced action text with embedded links as proper HTML list
+    enhanced_text = action_text + "<br><span style='color: #e67700; font-weight: 600;'>📎 Quick Setup:</span><ul style='margin: 5px 0; padding-left: 20px;'>"
+    
+    for link_name, link_info in action_links.items():
+        enhanced_text += f"<li style='margin: 3px 0;'><a href='{link_info['url']}' target='_blank' style='color: #4dabf7; text-decoration: none; font-weight: 600;'>{link_name}</a> <span style='color: #adb5bd; font-size: 0.85em; font-style: italic;'>({link_info['benefit']})</span></li>"
+    
+    enhanced_text += "</ul>"
+    
+    return enhanced_text
+
+def enhance_insights_with_links(insights_text, industry, store_type):
+    """
+    Process the insights text to add actionable links to action items.
+    """
+    lines = insights_text.split('\n')
+    enhanced_lines = []
+    
+    for line in lines:
+        if line.strip().startswith('💡 ACTION:'):
+            # Extract the action text
+            action_text = line.strip()
+            # Get enhanced version with links
+            enhanced_action = get_actionable_links(action_text, industry, store_type)
+            enhanced_lines.append(enhanced_action)
+        else:
+            enhanced_lines.append(line)
+    
+    return '\n'.join(enhanced_lines)
+
+def get_link_documentation():
+    """
+    Comprehensive documentation of all links provided in the system with purpose and use cases.
+    This helps merchants understand exactly what each tool does and how it helps their business.
+    """
+    
+    link_documentation = {
+        
+        # ==================== COMBO MEALS & BUNDLING ACTIONS ====================
+        "combo_bundling": {
+            "Menu Design Tools (Canva)": {
+                "purpose": "Create professional, attractive menus that highlight combo deals and bundles",
+                "use_case": "Restaurant wants to promote 'Lunch Combo: Main + Drink + Dessert for ₹299'. Use Canva to design eye-catching menu boards showing the combo prominently with appetizing visuals and clear savings message.",
+                "benefit": "Well-designed menus can increase combo sales by 30-40%"
+            },
+            "Food Photography (Zomato)": {
+                "purpose": "Get professional photos of your combo meals that make them look irresistible",
+                "use_case": "Your 'Family Feast' combo looks amazing in person but photos on delivery apps are poor quality. Zomato's photo service creates high-quality images that make customers order more combos online.",
+                "benefit": "Professional food photos can increase online orders by 50-70%"
+            },
+            "POS Menu Setup (Razorpay)": {
+                "purpose": "Configure your point-of-sale system to easily ring up combo deals and track their performance",
+                "use_case": "You want to offer 'Buy 2 Shirts + Get 1 Tie Free' but staff struggle with pricing. Razorpay POS lets you set up combo buttons that automatically calculate discounts and track which combos sell best.",
+                "benefit": "Automated combo pricing reduces errors and speeds up checkout by 25%"
+            },
+            "Outfit Styling (Canva Lookbooks)": {
+                "purpose": "Create visual guides showing how different clothing items work together as complete outfits",
+                "use_case": "Fashion store wants to sell 'Complete Office Look: Shirt + Pants + Belt + Shoes'. Create lookbook showing the full outfit on models, helping customers visualize the complete style.",
+                "benefit": "Outfit displays can increase average purchase value by 40-60%"
+            },
+            "Product Bundling (Shopify Blog)": {
+                "purpose": "Learn proven strategies for creating attractive product bundles that customers want to buy",
+                "use_case": "You sell electronics but customers buy items separately. Learn how to bundle 'Phone + Case + Screen Protector + Charger' as 'Complete Phone Protection Kit' with attractive pricing.",
+                "benefit": "Strategic bundling can increase transaction value by 20-35%"
+            }
+        },
+
+        # ==================== LOYALTY & CUSTOMER RETENTION ACTIONS ====================
+        "loyalty_retention": {
+            "WhatsApp Business": {
+                "purpose": "Send personalized loyalty updates, special offers, and rewards directly to customers' phones",
+                "use_case": "Regular customer hasn't visited in 2 weeks. Send WhatsApp message: 'Hi Priya! Miss your usual masala chai ☕ Come back this week and get 20% off your favorite snacks!' with a direct link to order.",
+                "benefit": "Direct messaging can bring back 25-35% of inactive customers"
+            },
+            "Customer Database (Zoho CRM)": {
+                "purpose": "Track every customer's purchase history, preferences, and behavior to create personalized rewards",
+                "use_case": "Mr. Sharma always buys formal shirts on Fridays. Your system automatically sends him an SMS every Thursday: 'New formal collection arrived! First look for our VIP customer - 15% off tomorrow only.'",
+                "benefit": "Personalized offers have 3x higher conversion rates than generic promotions"
+            },
+            "Restaurant Loyalty (Toast)": {
+                "purpose": "Set up point-based loyalty system specifically designed for restaurants",
+                "use_case": "Customer orders biryani 3 times = gets 4th biryani free. System tracks automatically, sends progress updates: 'You're 1 biryani away from your free meal!' Creates excitement and repeat visits.",
+                "benefit": "Loyalty programs can increase repeat visits by 40-50%"
+            },
+            "Style Rewards (Razorpay Magic Checkout)": {
+                "purpose": "Create smooth, fast checkout experience that makes loyal customers want to return",
+                "use_case": "VIP fashion customer gets one-click checkout for new arrivals. No need to enter details repeatedly - just click and buy. Makes luxury shopping feel effortless.",
+                "benefit": "Smooth checkout experience increases repeat purchases by 30%"
+            }
+        },
+
+        # ==================== DELIVERY & ONLINE ORDERING ACTIONS ====================
+        "delivery_online": {
+            "Zomato Partner": {
+                "purpose": "Join India's largest food delivery platform to reach millions of hungry customers",
+                "use_case": "Small restaurant has only 20 daily customers. After joining Zomato, gets 50+ delivery orders daily from customers within 5km radius who discovered them online.",
+                "benefit": "Delivery platforms can increase customer reach by 200-300%"
+            },
+            "Swiggy Partner": {
+                "purpose": "Access Swiggy's delivery network and customer base for restaurant growth",
+                "use_case": "Office area restaurant slow on weekends. Swiggy connects them to nearby residential customers who order family meals, doubling weekend revenue.",
+                "benefit": "Multi-platform presence can increase total orders by 60-80%"
+            },
+            "Payment Links (Razorpay)": {
+                "purpose": "Create simple links customers can click to order and pay instantly, even without an app",
+                "use_case": "Customer calls asking 'Can I order biryani for pickup?' You instantly send WhatsApp payment link. They click, pay ₹350, order confirmed. No cash handling needed.",
+                "benefit": "Payment links can reduce order abandonment by 40%"
+            },
+            "WhatsApp Catalog": {
+                "purpose": "Display your full product range with photos and prices directly in WhatsApp for easy ordering",
+                "use_case": "Electronics store creates WhatsApp catalog with phone cases, chargers, headphones. Customers browse, choose, and order directly through chat - no separate app needed.",
+                "benefit": "WhatsApp ordering can increase sales by 50% among existing customers"
+            }
+        },
+
+        # ==================== MARKETING & PROMOTION ACTIONS ====================
+        "marketing_promotion": {
+            "Google My Business": {
+                "purpose": "Make your business discoverable when people search for services near them",
+                "use_case": "Someone searches 'best biryani near me' at 8 PM. Your restaurant appears first with photos, timing, menu, and 4.5-star reviews. They call and order immediately.",
+                "benefit": "Optimized Google listing can increase foot traffic by 25-40%"
+            },
+            "Facebook Business": {
+                "purpose": "Create targeted ads to reach potential customers in your area with specific interests",
+                "use_case": "Fashion store targets ads to 'Women aged 25-40 within 5km who like fashion brands'. Ad shows new collection with 'First 50 customers get 30% off' - brings 20 new customers in one week.",
+                "benefit": "Targeted social media ads can generate 10x return on ad spend"
+            },
+            "Mall Advertising": {
+                "purpose": "Learn how to advertise effectively to mall shoppers with higher purchasing power",
+                "use_case": "Jewelry store in mall creates ads targeting 'People who visited malls in last 30 days' for wedding season. Reaches engaged couples planning to shop for wedding jewelry.",
+                "benefit": "Mall-specific advertising can increase premium sales by 60%"
+            },
+            "Local Ads (Google)": {
+                "purpose": "Show ads only to people in your immediate neighborhood who are most likely to visit",
+                "use_case": "Street-front pharmacy shows ads for 'Medicine delivery in 30 minutes' only to people within 2km radius during evening hours when they're most likely to need it.",
+                "benefit": "Hyper-local ads have 5x higher conversion rates than broad targeting"
+            }
+        },
+
+        # ==================== STAFF TRAINING & SERVICE ACTIONS ====================
+        "staff_training": {
+            "Customer Service Training (Udemy)": {
+                "purpose": "Train staff to handle customers professionally, increasing satisfaction and repeat business",
+                "use_case": "Restaurant staff often argue with customers about order mistakes. After training, they learn to say 'I apologize, let me fix this immediately' and offer compensation. Customer complaints drop 80%.",
+                "benefit": "Trained staff can increase customer retention by 45%"
+            },
+            "Staff Management (Razorpay Payroll)": {
+                "purpose": "Automate salary payments and manage staff efficiently to reduce administrative burden",
+                "use_case": "Store owner spends 2 hours monthly calculating salaries, bonuses, deductions. Razorpay Payroll automates everything - salaries paid on time, staff happier, owner focuses on business growth.",
+                "benefit": "Automated payroll saves 10-15 hours monthly and reduces errors"
+            },
+            "Food Service Training": {
+                "purpose": "Specialized training for restaurant staff on food safety, service speed, and customer interaction",
+                "use_case": "Waiters don't know how to describe dishes to customers. Training teaches them to say 'Our butter chicken is creamy, mildly spiced, perfect with naan' instead of just 'it's good'. Orders increase 25%.",
+                "benefit": "Specialized training can increase average order value by 20-30%"
+            }
+        },
+
+        # ==================== PAYMENT & CHECKOUT ACTIONS ====================
+        "payment_checkout": {
+            "Razorpay POS": {
+                "purpose": "Accept all types of payments (cards, UPI, wallets) in one device, making checkout faster",
+                "use_case": "Customer wants to pay ₹1,247 but only has ₹1,000 cash. With Razorpay POS, they pay ₹1,000 cash + ₹247 via UPI. Sale completed, customer happy.",
+                "benefit": "Multiple payment options can reduce lost sales by 30%"
+            },
+            "Payment Gateway": {
+                "purpose": "Accept online payments securely for e-commerce, bookings, or advance orders",
+                "use_case": "Cake shop takes advance orders for birthdays. Customers pay 50% online while ordering, 50% on delivery. No more cancelled orders due to payment issues.",
+                "benefit": "Online payments can reduce order cancellations by 50%"
+            },
+            "QR Code Setup": {
+                "purpose": "Generate simple QR codes customers can scan to pay instantly without cash",
+                "use_case": "Street food vendor places QR code on cart. Customers scan, pay ₹50 for vada pav, payment confirmed instantly. No cash handling, no change issues, faster service.",
+                "benefit": "QR payments can speed up transactions by 40% and improve cash flow"
+            }
+        },
+
+        # ==================== ANALYTICS & INSIGHTS ACTIONS ====================
+        "analytics_insights": {
+            "Business Analytics (Razorpay Dashboard)": {
+                "purpose": "See which products sell best, when customers buy most, and track business growth patterns",
+                "use_case": "Clothing store discovers 70% sales happen between 6-9 PM on weekdays. Adjusts staff schedule and runs 'Evening Special' discounts during peak hours, increasing sales 25%.",
+                "benefit": "Data-driven decisions can improve profitability by 30-40%"
+            },
+            "Sales Reports": {
+                "purpose": "Get detailed breakdowns of daily, weekly, monthly sales to identify trends and opportunities",
+                "use_case": "Restaurant notices biryani sales drop every Tuesday. Investigation reveals competitor's Tuesday biryani offer. Introduces 'Tuesday Tandoori Special' to compete, recovers lost revenue.",
+                "benefit": "Regular reporting helps identify and fix revenue leaks worth 15-25%"
+            },
+            "Performance Tracking (Google Analytics)": {
+                "purpose": "Track how customers find and interact with your business online",
+                "use_case": "Jewelry store sees most website visitors come from 'gold price' searches but don't buy. Creates 'Gold Price Protection Plan' offer for these visitors, converting 20% to customers.",
+                "benefit": "Website optimization can increase online inquiries by 50-100%"
+            }
+        },
+
+        # ==================== CUSTOMER EXPERIENCE ACTIONS ====================
+        "customer_experience": {
+            "Feedback System (Google Reviews)": {
+                "purpose": "Collect and respond to customer reviews to build trust and improve service",
+                "use_case": "Restaurant gets review: 'Food great but service slow'. Owner responds publicly: 'Thank you for feedback! We've added 2 servers for faster service. Please visit again!' Shows responsiveness.",
+                "benefit": "Responding to reviews can increase positive ratings by 30% and attract more customers"
+            },
+            "Customer Support (WhatsApp)": {
+                "purpose": "Provide instant customer support through the app most Indians use daily",
+                "use_case": "Customer messages at 10 PM: 'Is my saree alteration ready?' Quick reply: 'Yes! Ready for pickup tomorrow after 11 AM. Here's the photo.' Customer feels valued and cared for.",
+                "benefit": "Instant support can increase customer satisfaction scores by 40%"
+            },
+            "Table Booking (OpenTable)": {
+                "purpose": "Allow customers to book restaurant tables online, reducing wait times and managing capacity",
+                "use_case": "Family wants dinner on Saturday 8 PM. Books table online, arrives to reserved seating. No waiting, no arguments. Restaurant manages capacity better, serves more customers.",
+                "benefit": "Online booking can increase table utilization by 25% and reduce no-shows"
+            }
+        }
+    }
+    
+    return link_documentation
+
+def display_link_guide():
+    """
+    Display a comprehensive guide of all available links and their purposes.
+    This can be used as a help section or documentation for merchants.
+    """
+    
+    documentation = get_link_documentation()
+    
+    guide_html = """
+    <div style='max-width: 1200px; margin: 0 auto; padding: 20px; color: #e0e0e0;'>
+        <h1 style='color: #4dabf7; text-align: center; margin-bottom: 30px;'>📚 Business Tools Guide</h1>
+        <p style='text-align: center; font-size: 1.1em; margin-bottom: 40px; color: #adb5bd;'>
+            Comprehensive guide to all business tools and links provided in your AI insights
+        </p>
+    """
+    
+    # Category headers with emojis and descriptions
+    category_info = {
+        "combo_bundling": {
+            "title": "🍽️ Combo Meals & Product Bundling",
+            "description": "Tools to create attractive combos and bundles that increase your average transaction value"
+        },
+        "loyalty_retention": {
+            "title": "🔄 Customer Loyalty & Retention", 
+            "description": "Systems to keep customers coming back and increase repeat purchases"
+        },
+        "delivery_online": {
+            "title": "🚚 Delivery & Online Ordering",
+            "description": "Platforms to expand your reach beyond physical store location"
+        },
+        "marketing_promotion": {
+            "title": "📢 Marketing & Promotion",
+            "description": "Tools to attract new customers and increase your business visibility"
+        },
+        "staff_training": {
+            "title": "👥 Staff Training & Management",
+            "description": "Resources to improve your team's skills and efficiency"
+        },
+        "payment_checkout": {
+            "title": "💳 Payment & Checkout Solutions",
+            "description": "Modern payment systems to make transactions smooth and fast"
+        },
+        "analytics_insights": {
+            "title": "📊 Analytics & Business Insights",
+            "description": "Data tools to understand your business performance and make better decisions"
+        },
+        "customer_experience": {
+            "title": "⭐ Customer Experience Enhancement",
+            "description": "Tools to improve how customers interact with your business"
+        }
+    }
+    
+    for category_key, category_data in documentation.items():
+        if category_key in category_info:
+            cat_info = category_info[category_key]
+            
+            guide_html += f"""
+            <div style='margin: 40px 0; padding: 25px; border-radius: 12px; border-left: 4px solid #4dabf7; background: rgba(77, 171, 247, 0.1);'>
+                <h2 style='color: #4dabf7; margin-bottom: 10px;'>{cat_info['title']}</h2>
+                <p style='color: #adb5bd; margin-bottom: 25px; font-style: italic;'>{cat_info['description']}</p>
+            """
+            
+            for tool_name, tool_info in category_data.items():
+                guide_html += f"""
+                <div style='margin: 20px 0; padding: 20px; border-radius: 8px; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1);'>
+                    <h3 style='color: #e67700; margin-bottom: 12px; font-size: 1.1em;'>{tool_name}</h3>
+                    
+                    <div style='margin: 12px 0;'>
+                        <strong style='color: #4dabf7;'>Purpose:</strong>
+                        <span style='color: #e0e0e0;'> {tool_info['purpose']}</span>
+                    </div>
+                    
+                    <div style='margin: 12px 0;'>
+                        <strong style='color: #2b8a3e;'>Real Example:</strong>
+                        <span style='color: #e0e0e0; font-style: italic;'> {tool_info['use_case']}</span>
+                    </div>
+                    
+                    <div style='margin: 12px 0; padding: 10px; background: rgba(43, 138, 62, 0.2); border-radius: 6px; border-left: 3px solid #2b8a3e;'>
+                        <strong style='color: #2b8a3e;'>💰 Expected Benefit:</strong>
+                        <span style='color: #e0e0e0;'> {tool_info['benefit']}</span>
+                    </div>
+                </div>
+                """
+            
+            guide_html += "</div>"
+    
+    guide_html += """
+        <div style='margin-top: 50px; padding: 30px; text-align: center; background: rgba(77, 171, 247, 0.1); border-radius: 12px; border: 2px solid #4dabf7;'>
+            <h2 style='color: #4dabf7; margin-bottom: 15px;'>🚀 Getting Started</h2>
+            <p style='color: #e0e0e0; font-size: 1.1em; margin-bottom: 20px;'>
+                Choose tools based on your current business challenges:
+            </p>
+            <div style='display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin-top: 20px;'>
+                <div style='padding: 15px; background: rgba(230, 119, 0, 0.2); border-radius: 8px;'>
+                    <strong style='color: #e67700;'>📈 Need More Sales?</strong><br>
+                    <span style='color: #e0e0e0; font-size: 0.9em;'>Start with Marketing & Promotion tools</span>
+                </div>
+                <div style='padding: 15px; background: rgba(43, 138, 62, 0.2); border-radius: 8px;'>
+                    <strong style='color: #2b8a3e;'>🔄 Want Repeat Customers?</strong><br>
+                    <span style='color: #e0e0e0; font-size: 0.9em;'>Focus on Loyalty & Retention systems</span>
+                </div>
+                <div style='padding: 15px; background: rgba(77, 171, 247, 0.2); border-radius: 8px;'>
+                    <strong style='color: #4dabf7;'>💰 Increase Order Value?</strong><br>
+                    <span style='color: #e0e0e0; font-size: 0.9em;'>Use Combo & Bundling strategies</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    """
+    
+    return guide_html

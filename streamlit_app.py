@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np # Import numpy
 import traceback # Import traceback for error printing
 import plotly.graph_objects as go
+import re
 
 # Use the new comparison function and insight engine
 # Ensure these imports don't implicitly call Streamlit functions before set_page_config
@@ -16,7 +17,8 @@ try:
     # Update insights_engine imports to only include what we need
     from insights_engine import (
         generate_crisp_insights,
-        format_insights_for_display
+        format_insights_for_display,
+        display_link_guide
     )
 except ImportError as import_err:
     # Display error in the app if imports fail
@@ -624,6 +626,20 @@ with st.sidebar:
         - **Retail Cluster A**: High footfall, lower avg transaction
         - **Fashion Cluster A**: Boutique stores, premium pricing
         """)
+    
+    # Add business tools guide
+    with st.expander("📚 Business Tools Guide", expanded=False):
+        st.markdown("### Complete Guide to Business Tools & Links")
+        st.markdown("Learn what each suggested tool does and how it can help your specific business:")
+        
+        # Display the comprehensive guide
+        guide_html = display_link_guide()
+        st.markdown(guide_html, unsafe_allow_html=True)
+        
+        st.markdown("---")
+        st.markdown("💡 **Tip:** When you see links in your insights, they're specifically chosen based on your business needs and performance gaps!")
+    
+    st.divider()
 
 # --- Main Area ---
 if merchant_id:
@@ -679,6 +695,15 @@ if merchant_id:
             # Quick Insights
             try:
                 st.markdown("### 📊 Key Insights")
+                
+                # Add debug button to clear cache
+                col_debug1, col_debug2 = st.columns([3, 1])
+                with col_debug2:
+                    if st.button("🔄 Regenerate", help="Clear cache and regenerate insights"):
+                        st.session_state.crisp_insights = None
+                        st.session_state.impact_data = None
+                        st.cache_data.clear()
+                        st.rerun()
                 
                 # Initialize session state for insights if not exists
                 if 'crisp_insights' not in st.session_state:
@@ -1020,47 +1045,3 @@ else:
             <p>Select a merchant from the sidebar to get started with AI-powered analysis.</p>
         </div>
     """, unsafe_allow_html=True)
-
-def format_insights_for_display(insights_text, impact_data=None):
-    """Format insights with proper spacing and line breaks for Streamlit display."""
-    # Split into individual insights
-    insights = insights_text.strip().split('\n\n')
-    formatted_insights = []
-    
-    for i, insight in enumerate(insights):
-        if not insight.strip():
-            continue
-            
-        # Split the insight into lines
-        lines = insight.strip().split('\n')
-        if len(lines) >= 3:  # Ensure we have all three parts
-            # Get the metric from the insight
-            metric = None
-            insight_text = lines[0].lower()
-            
-            # More comprehensive metric detection with unique identifiers
-            if 'transaction value' in insight_text or 'avg' in insight_text or 'value' in insight_text:
-                metric = 'Avg Txn Value'
-            elif 'daily count' in insight_text:
-                metric = 'Daily Txn Count (Count)'
-            elif 'daily txns' in insight_text:
-                metric = 'Daily Txn Count (Txns)'
-            elif 'daily' in insight_text or 'count' in insight_text or 'transaction' in insight_text or 'customers' in insight_text:
-                metric = 'Daily Txn Count'
-            elif 'refund' in insight_text or 'rate' in insight_text:
-                metric = 'Refund Rate'
-            elif 'income' in insight_text or 'level' in insight_text:
-                metric = 'Income Level'
-            
-            # Only add to formatted insights if we found a metric
-            if metric:
-                formatted_insight = f"""
-                <div style='margin: 10px 0; padding: 15px; border-radius: 8px; border: 1px solid #4dabf7; background: transparent;'>
-                    <p style='margin: 5px 0; color: #e0e0e0;'>{lines[0]}</p>
-                    <p style='margin: 5px 0; color: #e0e0e0;'>{lines[1]}</p>
-                    <p style='margin: 5px 0; color: #e0e0e0;'>{lines[2]}</p>
-                </div>
-                """
-                formatted_insights.append((formatted_insight, metric, i))  # Add index for unique key
-    
-    return formatted_insights
