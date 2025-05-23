@@ -95,6 +95,41 @@ st.markdown("""
         background: transparent !important;
         background-color: transparent !important;
     }
+
+    /* Tooltip styles */
+    [title] {
+        position: relative;
+        cursor: help;
+    }
+    [title]:hover::after {
+        content: attr(title);
+        position: absolute;
+        bottom: 100%;
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 5px 10px;
+        background-color: #2b2b2b;
+        color: #e0e0e0;
+        border-radius: 4px;
+        font-size: 0.8em;
+        white-space: nowrap;
+        z-index: 1000;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        border: 1px solid #404040;
+        max-width: 300px;
+        white-space: normal;
+    }
+    [title]:hover::before {
+        content: '';
+        position: absolute;
+        bottom: 100%;
+        left: 50%;
+        transform: translateX(-50%);
+        border-width: 5px;
+        border-style: solid;
+        border-color: #404040 transparent transparent transparent;
+        z-index: 1000;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -140,28 +175,78 @@ st.markdown("""
     Select a merchant from the sidebar to get started with AI-powered analysis and recommendations.
 """)
 
+# Check if data loaded successfully
+if merchants is None or merchants.empty:
+    st.error("No merchant data available. Please check your data files and try again.")
+    st.stop()
+
 # Initialize merchant list
-merchant_id_list = []
-if not merchants.empty:
-    merchant_id_list = merchants['merchant_id'].unique().tolist()
+merchant_id_list = merchants['merchant_id'].unique().tolist()
 
 # --- Sidebar ---
 with st.sidebar:
     st.header("🔍 Select Merchant")
     
+    # Add filters section
+    st.subheader("Filters")
+    
+    # Industry filter
+    industries = sorted(merchants['industry'].unique().tolist())
+    selected_industry = st.selectbox(
+        "Industry",
+        ["All"] + industries,
+        index=0
+    )
+    
+    # Store Type filter
+    store_types = sorted(merchants['store_type'].unique().tolist())
+    selected_store_type = st.selectbox(
+        "Store Type",
+        ["All"] + store_types,
+        index=0
+    )
+    
+    # City filter
+    cities = sorted(merchants['city'].unique().tolist())
+    selected_city = st.selectbox(
+        "City",
+        ["All"] + cities,
+        index=0
+    )
+    
+    st.divider()
+    
     # Add a search box for merchant IDs
     merchant_search = st.text_input("Search Merchant ID", "")
     
-    # Filter merchant IDs based on search
+    # Filter merchants using pandas (much more efficient)
+    filtered_df = merchants.copy()
+    
+    # Apply filters
+    if selected_industry != "All":
+        filtered_df = filtered_df[filtered_df['industry'] == selected_industry]
+    
+    if selected_store_type != "All":
+        filtered_df = filtered_df[filtered_df['store_type'] == selected_store_type]
+    
+    if selected_city != "All":
+        filtered_df = filtered_df[filtered_df['city'] == selected_city]
+    
+    # Apply search filter
     if merchant_search:
-        filtered_merchants = [m for m in merchant_id_list if merchant_search.lower() in m.lower()]
-    else:
-        filtered_merchants = merchant_id_list
+        filtered_df = filtered_df[filtered_df['merchant_id'].str.lower().str.contains(merchant_search.lower())]
+    
+    # Get filtered merchant IDs and sort them
+    filtered_merchants = sorted(filtered_df['merchant_id'].tolist())
+    
+    # Display merchant count
+    st.markdown(f"**Found {len(filtered_merchants)} merchants**")
     
     if filtered_merchants:
+        # Simple selectbox with just merchant IDs for now
         merchant_id = st.selectbox(
             "Select from Results",
-            sorted(filtered_merchants),
+            filtered_merchants,
             index=0
         )
         
@@ -175,13 +260,19 @@ with st.sidebar:
             st.session_state.show_detailed_analysis = False
             st.session_state.show_visual_insights = False
             st.session_state.last_merchant = merchant_id
+            
+        # Display selected merchant info
+        selected_merchant_info = merchants[merchants['merchant_id'] == merchant_id].iloc[0]
+        st.markdown(f"**Selected:** {merchant_id}")
+        st.markdown(f"**Industry:** {selected_merchant_info['industry']}")
+        st.markdown(f"**City:** {selected_merchant_info['city']}")
+        st.markdown(f"**Store Type:** {selected_merchant_info['store_type']}")
     else:
-        st.warning("No merchants found matching your search.")
+        st.warning("No merchants found matching your filters.")
         merchant_id = None
 
     st.divider()
     
-
     # Add clustering explanation
     with st.expander("ℹ️ Understanding Your Analysis", expanded=False):
         st.markdown("""
@@ -346,13 +437,13 @@ if merchant_id:
                                 details_html = f"""
                                 <div style='margin-top: -20px; margin-bottom: 30px;'>
                                     <p style='color: #e0e0e0; font-size: 0.9em;'>
-                                        <span style='color: #4dabf7;'>●</span> Current: {data['current']:.2f} | 
+                                        <span style='color: #4dabf7;' title='Your current performance value'>●</span> Current: {data['current']:.2f} | 
                                 """
                                 if data['metric'] != 'Income Level':
-                                    details_html += f"<span style='color: #2b8a3e;'>●</span> Expected: {data['expected']:.2f} | "
-                                details_html += f"<span style='color: #adb5bd;'>●</span> Local Average: {data['local_avg']:.2f}"
+                                    details_html += f"<span style='color: #2b8a3e;' title='Expected value after implementing the suggested action'>●</span> Expected: {data['expected']:.2f} | "
+                                details_html += f"<span style='color: #adb5bd;' title='Average of businesses in your immediate area (same pincode and industry)'>●</span> Local Average: {data['local_avg']:.2f}"
                                 if data['cluster_avg'] is not None:
-                                    details_html += f" | <span style='color: #e67700;'>●</span> Cluster Average: {data['cluster_avg']:.2f}"
+                                    details_html += f" | <span style='color: #e67700;' title='Average of businesses with similar performance patterns, regardless of location'>●</span> Cluster Average: {data['cluster_avg']:.2f}"
                                 details_html += "</p></div>"
                                 
                                 st.markdown(details_html, unsafe_allow_html=True)
