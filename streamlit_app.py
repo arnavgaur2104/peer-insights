@@ -286,20 +286,28 @@ with st.sidebar:
         - Direct competition for customers
         - Helps you understand your local market position
 
-        #### 2. Similar Businesses (Clusters) 🔄
-        - Businesses with similar performance patterns
-        - May be in different locations
-        - Share similar characteristics:
-            - Transaction patterns
-            - Customer behavior
-            - Operational efficiency
-            - Business size and scale
+        #### 2. Industry Clusters 🔄
+        - Businesses in the **same industry** with similar performance patterns
+        - Grouped by operational similarities within your industry
+        - May be in different locations but share characteristics:
+            - Similar transaction patterns
+            - Comparable customer behavior
+            - Similar operational efficiency
+            - Comparable business scale
+        - **Industry-specific insights**: Retail vs Restaurant vs Fashion
 
-        #### Why This Matters
-        - Compare with immediate competition
-        - Learn from similar businesses
-        - Identify unique opportunities
-        - Make data-driven decisions
+        #### Why Industry-Specific Clustering Matters
+        - More relevant comparisons (restaurants vs restaurants, not vs fashion stores)
+        - Industry-specific best practices and benchmarks
+        - Actionable insights tailored to your business type
+        - Learn from successful peers in your industry
+        - Understand industry-wide trends and opportunities
+
+        #### Example Clusters
+        - **Restaurant Cluster A**: High-volume, quick service
+        - **Restaurant Cluster B**: Premium dining, higher ticket size
+        - **Retail Cluster A**: High footfall, lower avg transaction
+        - **Fashion Cluster A**: Boutique stores, premium pricing
         """)
 
 # --- Main Area ---

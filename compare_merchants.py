@@ -34,92 +34,126 @@ def preprocess_chunk(chunk, preprocessor):
     """Preprocess a chunk of data in parallel."""
     return preprocessor.transform(chunk)
 
-def cluster_merchants(merchants_df, n_clusters=4, batch_size=1000):
-    """Applies preprocessing and MiniBatchKMeans clustering to merchants with parallel processing."""
+def cluster_merchants_by_industry(merchants_df, n_clusters=3, batch_size=1000):
+    """
+    Applies preprocessing and MiniBatchKMeans clustering to merchants within each industry separately.
+    This provides more meaningful comparisons as businesses in the same industry have similar patterns.
+    """
     if merchants_df.empty or not all(col in merchants_df.columns for col in ALL_METRICS):
-         print("Warning: Missing required columns for clustering or empty DataFrame.")
-         return merchants_df, None, None
-
-    # Separate features
-    features = merchants_df[ALL_METRICS].copy()
-
-    # Handle potential NaNs
-    for col in NUMERIC_METRICS:
-        if features[col].isnull().any():
-            features[col] = features[col].fillna(features[col].median())
-    for col in CATEGORICAL_METRICS:
-         if features[col].isnull().any():
-             features[col] = features[col].fillna(features[col].mode()[0])
-
-    # Create preprocessing pipelines
-    numeric_transformer = Pipeline(steps=[
-        ('scaler', StandardScaler())
-    ])
-
-    categorical_transformer = Pipeline(steps=[
-        ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
-    ])
-
-    # Create column transformer
-    preprocessor = ColumnTransformer(
-        transformers=[
-            ('num', numeric_transformer, NUMERIC_METRICS),
-            ('cat', categorical_transformer, CATEGORICAL_METRICS)
-        ],
-        remainder='passthrough'
-    )
-
-    try:
-        # Fit preprocessor
-        preprocessor.fit(features)
-        
-        # Split data into chunks for parallel processing
-        chunk_size = max(1, len(features) // N_CORES)
-        chunks = [features[i:i + chunk_size] for i in range(0, len(features), chunk_size)]
-        
-        # Process chunks in parallel
-        processed_chunks = Parallel(n_jobs=N_CORES)(
-            delayed(preprocess_chunk)(chunk, preprocessor) for chunk in chunks
-        )
-        
-        # Combine processed chunks
-        processed_features = np.vstack(processed_chunks)
-        
-        # Initialize and fit MiniBatchKMeans
-        kmeans = MiniBatchKMeans(
-            n_clusters=n_clusters,
-            batch_size=batch_size,
-            random_state=42,
-            n_init=3,  # Reduced from 10 since we're using mini-batches
-            max_iter=100
-        )
-        
-        # Fit and predict clusters
-        clusters = kmeans.fit_predict(processed_features)
-        merchants_df['cluster'] = clusters
-        
-        return merchants_df, kmeans, preprocessor
-        
-    except Exception as e:
-        print(f"Error during clustering: {e}")
-        merchants_df['cluster'] = -1
+        print("Warning: Missing required columns for clustering or empty DataFrame.")
         return merchants_df, None, None
 
+    # Initialize cluster column
+    merchants_df['cluster'] = -1
+    
+    # Get unique industries
+    industries = merchants_df['industry'].unique()
+    print(f"Clustering merchants within {len(industries)} industries: {industries}")
+    
+    models_dict = {}
+    preprocessors_dict = {}
+    
+    for industry in industries:
+        print(f"Clustering {industry} merchants...")
+        
+        # Filter merchants by industry
+        industry_merchants = merchants_df[merchants_df['industry'] == industry].copy()
+        
+        if len(industry_merchants) < 2:
+            print(f"Skipping {industry}: insufficient data (only {len(industry_merchants)} merchants)")
+            continue
+            
+        # Adjust number of clusters based on data size
+        industry_n_clusters = min(n_clusters, len(industry_merchants) // 2)
+        if industry_n_clusters < 2:
+            print(f"Skipping {industry}: insufficient merchants for clustering")
+            continue
+            
+        # Separate features (excluding industry since all are the same)
+        features = industry_merchants[ALL_METRICS].copy()
+
+        # Handle potential NaNs
+        for col in NUMERIC_METRICS:
+            if features[col].isnull().any():
+                features[col] = features[col].fillna(features[col].median())
+        for col in CATEGORICAL_METRICS:
+            if features[col].isnull().any():
+                features[col] = features[col].fillna(features[col].mode()[0] if not features[col].mode().empty else 'Unknown')
+
+        # Create preprocessing pipelines
+        numeric_transformer = Pipeline(steps=[
+            ('scaler', StandardScaler())
+        ])
+
+        categorical_transformer = Pipeline(steps=[
+            ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
+        ])
+
+        # Create column transformer
+        preprocessor = ColumnTransformer(
+            transformers=[
+                ('num', numeric_transformer, NUMERIC_METRICS),
+                ('cat', categorical_transformer, CATEGORICAL_METRICS)
+            ],
+            remainder='passthrough'
+        )
+
+        try:
+            # Fit preprocessor for this industry
+            preprocessor.fit(features)
+            
+            # Process features
+            processed_features = preprocessor.transform(features)
+            
+            # Initialize and fit MiniBatchKMeans for this industry
+            kmeans = MiniBatchKMeans(
+                n_clusters=industry_n_clusters,
+                batch_size=min(batch_size, len(industry_merchants)),
+                random_state=42,
+                n_init=3,
+                max_iter=100
+            )
+            
+            # Fit and predict clusters for this industry
+            industry_clusters = kmeans.fit_predict(processed_features)
+            
+            # Create industry-specific cluster IDs (e.g., "Retail_0", "Restaurant_1")
+            industry_cluster_ids = [f"{industry}_{cluster}" for cluster in industry_clusters]
+            
+            # Update the main dataframe with cluster assignments
+            merchants_df.loc[merchants_df['industry'] == industry, 'cluster'] = industry_cluster_ids
+            
+            # Store models and preprocessors for this industry
+            models_dict[industry] = kmeans
+            preprocessors_dict[industry] = preprocessor
+            
+            print(f"Successfully clustered {len(industry_merchants)} {industry} merchants into {industry_n_clusters} clusters")
+            
+        except Exception as e:
+            print(f"Error clustering {industry} merchants: {e}")
+            continue
+    
+    return merchants_df, models_dict, preprocessors_dict
+
+# Keep the old function name for backward compatibility
+def cluster_merchants(merchants_df, n_clusters=3, batch_size=1000):
+    """Wrapper function that calls the new industry-specific clustering."""
+    return cluster_merchants_by_industry(merchants_df, n_clusters, batch_size)
 
 def get_comparison_data(merchant_id, merchants_df, competitors_df):
     """
-    Performs clustering and generates comparison dataframes.
+    Performs industry-specific clustering and generates comparison dataframes.
     Returns:
         - merchant_row (dict): Profile of the selected merchant.
         - comparison_df (pd.DataFrame): Comparison vs local competitors avg.
         - cluster_comparison_df (pd.DataFrame): Comparison vs cluster avg.
         - local_competitors (pd.DataFrame): DataFrame of local competitors.
-        - cluster_peers (pd.DataFrame): DataFrame of merchants in the same cluster.
+        - cluster_peers (pd.DataFrame): DataFrame of merchants in the same cluster and industry.
         - cluster_averages (pd.Series): Average metrics for the merchant's cluster.
     """
-    # --- 1. Cluster ALL merchants first ---
-    merchants_clustered_df, kmeans_model, preprocessor = cluster_merchants(merchants_df.copy())
-    if kmeans_model is None: # Handle clustering failure
+    # --- 1. Cluster merchants by industry ---
+    merchants_clustered_df, kmeans_models, preprocessors = cluster_merchants(merchants_df.copy())
+    if kmeans_models is None or not kmeans_models: # Handle clustering failure
          print("Clustering failed, cannot provide cluster comparison.")
          merchants_clustered_df['cluster'] = -1 # Ensure column exists
 
@@ -128,10 +162,12 @@ def get_comparison_data(merchant_id, merchants_df, competitors_df):
     merchant_row = get_merchant_profile(merchant_id, merchants_clustered_df)
     if merchant_row is None:
         return None, None, None, None, None, None
+    
     merchant_cluster = merchant_row.get('cluster', -1) # Get cluster, default to -1 if missing
+    merchant_industry = merchant_row.get('industry', None)
 
 
-    # --- 3. Find Local Competitors ---
+    # --- 3. Find Local Competitors (same pincode and industry) ---
     local_competitors = competitors_df[
         (competitors_df['pincode'] == merchant_row['pincode']) &
         (competitors_df['industry'] == merchant_row['industry']) &
@@ -145,16 +181,22 @@ def get_comparison_data(merchant_id, merchants_df, competitors_df):
         local_comp_avg = local_competitors[NUMERIC_METRICS].mean()
 
 
-    # --- 5. Find Cluster Peers & Calculate Cluster Averages ---
+    # --- 5. Find Cluster Peers & Calculate Cluster Averages (same industry and cluster) ---
     cluster_peers = pd.DataFrame()
     cluster_averages = None
-    if merchant_cluster != -1: # Check if clustering was successful and merchant has a cluster
-         cluster_peers = merchants_clustered_df[
-             (merchants_clustered_df['cluster'] == merchant_cluster) &
-             (merchants_clustered_df['merchant_id'] != merchant_id) # Exclude self
-         ].copy()
-         if not cluster_peers.empty:
-             cluster_averages = cluster_peers[NUMERIC_METRICS].mean()
+    if merchant_cluster != -1 and merchant_industry is not None: # Check if clustering was successful
+        # Find peers in the same cluster (which are automatically in the same industry)
+        cluster_peers = merchants_clustered_df[
+            (merchants_clustered_df['cluster'] == merchant_cluster) &
+            (merchants_clustered_df['industry'] == merchant_industry) &  # Extra safety check
+            (merchants_clustered_df['merchant_id'] != merchant_id) # Exclude self
+        ].copy()
+        
+        if not cluster_peers.empty:
+            cluster_averages = cluster_peers[NUMERIC_METRICS].mean()
+            print(f"Found {len(cluster_peers)} cluster peers in {merchant_industry} industry, cluster {merchant_cluster}")
+        else:
+            print(f"No cluster peers found for {merchant_industry} industry, cluster {merchant_cluster}")
 
 
     # --- 6. Build Comparison DataFrames ---
