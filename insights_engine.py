@@ -1071,8 +1071,42 @@ def get_link_documentation():
 
 def display_link_guide():
     """
-    Display a comprehensive guide of all available links and their purposes.
-    This can be used as a help section or documentation for merchants.
+    Display a very concise, text-based guide of business tools suitable for sidebar.
+    """
+    
+    # Minimal text-based guide for sidebar
+    guide_text = """
+**📚 Business Tools Quick Reference**
+
+When you see tool links in your insights, here's what they help with:
+
+**🍽️ Combo & Bundling:** Canva (menu design), POS systems, product bundling
+**🔄 Customer Loyalty:** WhatsApp Business, CRM, loyalty programs  
+**🚚 Delivery & Online:** Zomato/Swiggy, payment links, WhatsApp catalog
+**📢 Marketing:** Google My Business, Facebook ads, local advertising
+**👥 Staff Training:** Udemy courses, payroll systems, service training
+**💳 Payments:** Razorpay POS, payment gateways, QR codes
+**📊 Analytics:** Business dashboards, Google Analytics, sales reports
+**⭐ Customer Experience:** Google Reviews, WhatsApp support, booking systems
+
+**💡 Tools are chosen based on:**
+• Your industry (Restaurant/Retail/Fashion)
+• Store type (Mall/Street/Standalone)
+• Specific performance gaps
+• Business size & customer patterns
+
+**🎯 Quick Start:**
+• **Low Sales?** → Use Marketing tools
+• **Low Repeat Customers?** → Focus on Loyalty systems  
+• **Low Order Value?** → Try Bundling strategies
+"""
+    
+    return guide_text
+
+def display_full_link_guide():
+    """
+    Display the complete detailed guide of all available links and their purposes.
+    This is the original comprehensive version for separate pages/tabs.
     """
     
     documentation = get_link_documentation()

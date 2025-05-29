@@ -18,7 +18,8 @@ try:
     from insights_engine import (
         generate_crisp_insights,
         format_insights_for_display,
-        display_link_guide
+        display_link_guide,
+        display_full_link_guide
     )
 except ImportError as import_err:
     # Display error in the app if imports fail
@@ -631,12 +632,9 @@ with st.sidebar:
     
     # Add business tools guide
     with st.expander("📚 Business Tools Guide", expanded=False):
-        st.markdown("### Complete Guide to Business Tools & Links")
-        st.markdown("Learn what each suggested tool does and how it can help your specific business:")
-        
-        # Display the comprehensive guide
-        guide_html = display_link_guide()
-        st.markdown(guide_html, unsafe_allow_html=True)
+        # Display the concise guide suitable for sidebar
+        guide_text = display_link_guide()
+        st.markdown(guide_text)
         
         st.markdown("---")
         st.markdown("💡 **Tip:** When you see links in your insights, they're specifically chosen based on your business needs and performance gaps!")
